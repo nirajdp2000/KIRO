@@ -13,11 +13,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UltraQuantEngineServiceTest {
 
+    private final QuantMarketDataFactoryService quantMarketDataFactoryService = new QuantMarketDataFactoryService();
+    private final HedgeFundSignalScoringService hedgeFundSignalScoringService = new HedgeFundSignalScoringService(
+            new PerformanceEngine(),
+            new InstitutionalService(),
+            quantMarketDataFactoryService
+    );
     private final UltraQuantEngineService ultraQuantEngineService = new UltraQuantEngineService(
             new PerformanceEngine(),
             new AIPredictionService(),
             new SignalAggregator(),
-            new InstitutionalService()
+            new InstitutionalService(),
+            quantMarketDataFactoryService,
+            hedgeFundSignalScoringService
     );
 
     @Test
@@ -33,6 +41,8 @@ class UltraQuantEngineServiceTest {
 
         assertNotNull(response);
         assertNotNull(response.getArchitecture());
+        assertNotNull(response.getHedgeFundSignals());
+        assertNotNull(response.getHedgeFundSignals().getRankings());
         assertFalse(response.getArchitecture().isEmpty());
         assertTrue(response.getResults().size() <= 100);
     }

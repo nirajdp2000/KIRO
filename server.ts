@@ -103,6 +103,47 @@ async function startServer() {
     volume: number;
   };
 
+  type HedgeFundSignalScore = {
+    rank: number;
+    stockSymbol: string;
+    sector: string;
+    momentumScore: number;
+    trendScore: number;
+    volumeScore: number;
+    volatilityScore: number;
+    sectorScore: number;
+    institutionalScore: number;
+    breakoutScore: number;
+    finalScore: number;
+    momentumValue: number;
+    orderImbalance: number;
+    breakoutProbability: number;
+  };
+
+  type HedgeFundSignalDashboard = {
+    rankings: HedgeFundSignalScore[];
+    sectorStrength: Array<{
+      sector: string;
+      averageReturn: number;
+      sectorScore: number;
+      leaders: string[];
+    }>;
+    momentumHeatmap: Array<{
+      symbol: string;
+      sector: string;
+      momentumScore: number;
+      finalScore: number;
+      breakoutScore: number;
+    }>;
+    summary: {
+      scannedUniverse: number;
+      returned: number;
+      averageFinalScore: number;
+      leadingSector: string;
+      institutionalAccumulationCandidates: number;
+    };
+  };
+
   const ultraArchitecture = [
     { stage: "Market Feed", description: "Ingests real-time ticks and historical candles through provider adapters." },
     { stage: "Tick Processor", description: "Normalizes OHLCV, order book depth, sector metadata, and microstructure events." },
@@ -299,6 +340,45 @@ async function startServer() {
     };
   };
 
+  const calculateAtr = (candles: UltraQuantCandle[], period: number) => {
+    if (candles.length < 2) {
+      return 0;
+    }
+
+    const startIndex = Math.max(1, candles.length - period);
+    const trueRanges: number[] = [];
+    for (let index = startIndex; index < candles.length; index++) {
+      const current = candles[index];
+      const previous = candles[index - 1];
+      const trueRange = Math.max(
+        current.high - current.low,
+        Math.max(
+          Math.abs(current.high - previous.close),
+          Math.abs(current.low - previous.close)
+        )
+      );
+      trueRanges.push(trueRange);
+    }
+
+    return average(trueRanges);
+  };
+
+  const relativePenalty = (value: number, target: number) => {
+    if (target <= 0) {
+      return 0;
+    }
+
+    return Math.abs(value - target) / target;
+  };
+
+  const normalizeScore = (value: number, min: number, max: number) => {
+    if (max === min) {
+      return value > 0 ? 100 : 50;
+    }
+
+    return clamp((value - min) / (max - min)) * 100;
+  };
+
   const createOrderBook = (symbol: string, lastPrice: number) => {
     const random = seededGenerator(symbolSeed(symbol) * 31);
     const bids = Array.from({ length: 10 }, (_, index) => ({
@@ -340,10 +420,13 @@ async function startServer() {
 
     const closes = candles.map((candle) => candle.close);
     const returns = buildReturns(closes);
+    const ema20 = buildEma(closes, 20);
     const ema50 = buildEma(closes, 50);
+    const ema200 = buildEma(closes, 200);
     const endPrice = closes[closes.length - 1];
     const startPrice = closes[0];
     const sixMonthPrice = closes[Math.max(0, closes.length - 126)];
+    const threeMonthPrice = closes[Math.max(0, closes.length - 63)];
     const fiveYearWindow = Math.min(closes.length - 1, 252 * Math.min(5, request.historicalPeriodYears));
     const fiveYearPrice = closes[Math.max(0, closes.length - 1 - fiveYearWindow)];
     const cagr = startPrice > 0 ? (Math.pow(endPrice / startPrice, 1 / request.historicalPeriodYears) - 1) * 100 : 0;
@@ -388,6 +471,29 @@ async function startServer() {
     const totalBidVolume = orderBook.bids.reduce((sum, level) => sum + level.volume, 0);
     const totalAskVolume = orderBook.asks.reduce((sum, level) => sum + level.volume, 0);
     const orderImbalance = totalAskVolume > 0 ? totalBidVolume / totalAskVolume : totalBidVolume;
+
+    const ema20Last = ema20[ema20.length - 1] ?? endPrice;
+    const ema50Last = ema50[ema50.length - 1] ?? endPrice;
+    const ema200Last = ema200[ema200.length - 1] ?? endPrice;
+    const alignedTrend = ema20Last > ema50Last && ema50Last > ema200Last;
+    const alignmentSpread = ((ema20Last - ema50Last) + (ema50Last - ema200Last)) / Math.max(endPrice, 1);
+    const emaSlope20 = calculateSlope(ema20.slice(-20)) / Math.max(endPrice, 1);
+    const hedgeMomentumRaw = threeMonthPrice > 0 ? endPrice / threeMonthPrice : 1;
+    const hedgeTrendRaw = clamp((alignedTrend ? 0.55 : 0.2) + clamp(alignmentSpread * 35) * 0.3 + clamp(Math.max(0, emaSlope20) * 450) * 0.15);
+    const hedgeVolumeRaw = recentVolumeRatio * (alignedTrend ? 1.25 : endPrice > ema20Last ? 1 : 0.72);
+    const atr = calculateAtr(candles, 14);
+    const atrPct = endPrice > 0 ? atr / endPrice : 0;
+    const hedgeVolatilityQualityRaw = clamp(1 - (0.55 * relativePenalty(atrPct, 0.025) + 0.45 * relativePenalty(volatility, 0.018)));
+    const sectorReturn = threeMonthPrice > 0 ? (endPrice - threeMonthPrice) / threeMonthPrice : 0;
+    const hedgeInstitutionalRaw = clamp(Math.max(0, orderImbalance - 1) / 2.5);
+    const previousHigh20 = closes.length > 1 ? Math.max(...closes.slice(Math.max(0, closes.length - 21), closes.length - 1)) : endPrice;
+    const breakoutAboveHigh = previousHigh20 > 0 ? endPrice / previousHigh20 : 1;
+    const longAtr = calculateAtr(candles, 28);
+    const volatilityCompression = longAtr > 0 ? clamp(1 - atr / longAtr) : 0.5;
+    const hedgeBreakoutRaw =
+      0.45 * clamp((breakoutAboveHigh - 0.985) / 0.06) +
+      0.35 * clamp((recentVolumeRatio - 1) / 2.2) +
+      0.2 * volatilityCompression;
     const fullVolumeProfile = calculateVolumeProfile(candles, Math.max(1, endPrice * 0.0025));
     const liquidityClusters = [
       { type: "Support Cluster", price: orderBook.bids[0].price, strength: "High" },
@@ -457,14 +563,157 @@ async function startServer() {
         val: fullVolumeProfile.val
       },
       liquidityClusters,
-      alerts
+      alerts,
+      hedgeFactors: {
+        averageVolume: recentVolume,
+        momentumRaw: hedgeMomentumRaw,
+        trendRaw: hedgeTrendRaw,
+        volumeRaw: hedgeVolumeRaw,
+        volatilityQualityRaw: hedgeVolatilityQualityRaw,
+        sectorReturn,
+        institutionalRaw: hedgeInstitutionalRaw,
+        breakoutRaw: hedgeBreakoutRaw
+      }
+    };
+  };
+
+  const buildHedgeFundSignalDashboard = (
+    analyzedUniverse: Array<any>,
+    request: ReturnType<typeof normalizeUltraQuantRequest>
+  ): HedgeFundSignalDashboard => {
+    const filtered = analyzedUniverse.filter((item) => {
+      const sectorMatches = request.sectorFilter === "ALL" || !request.sectorFilter || item.sector === request.sectorFilter;
+      return sectorMatches &&
+        item.marketCap >= request.minMarketCap &&
+        item.marketCap <= request.maxMarketCap &&
+        (item.hedgeFactors?.averageVolume ?? 0) >= request.minVolume &&
+        (item.hedgeFactors?.volatilityQualityRaw ?? 0) >= clamp(1 - request.volatilityThreshold * 2);
+    });
+
+    if (!filtered.length) {
+      return {
+        rankings: [],
+        sectorStrength: [],
+        momentumHeatmap: [],
+        summary: {
+          scannedUniverse: analyzedUniverse.length,
+          returned: 0,
+          averageFinalScore: 0,
+          leadingSector: "N/A",
+          institutionalAccumulationCandidates: 0
+        }
+      };
+    }
+
+    const sectorReturns = Array.from(filtered.reduce((accumulator, item) => {
+      const values = accumulator.get(item.sector) ?? [];
+      values.push(item.hedgeFactors.sectorReturn);
+      accumulator.set(item.sector, values);
+      return accumulator;
+    }, new Map<string, number[]>()))
+      .reduce<Record<string, number>>((accumulator, [sector, values]) => {
+        accumulator[sector] = average(values);
+        return accumulator;
+      }, {});
+
+    const sectorReturnValues = Object.values(sectorReturns);
+    const sectorReturnMin = Math.min(...sectorReturnValues);
+    const sectorReturnMax = Math.max(...sectorReturnValues);
+    const sectorScores = Object.fromEntries(
+      Object.entries(sectorReturns).map(([sector, value]) => [sector, normalizeScore(value, sectorReturnMin, sectorReturnMax)])
+    );
+
+    const momentumValues = filtered.map((item) => item.hedgeFactors.momentumRaw);
+    const volumeValues = filtered.map((item) => item.hedgeFactors.volumeRaw);
+    const institutionalValues = filtered.map((item) => item.hedgeFactors.institutionalRaw);
+    const breakoutValues = filtered.map((item) => item.hedgeFactors.breakoutRaw);
+    const momentumMin = Math.min(...momentumValues);
+    const momentumMax = Math.max(...momentumValues);
+    const volumeMin = Math.min(...volumeValues);
+    const volumeMax = Math.max(...volumeValues);
+    const institutionalMin = Math.min(...institutionalValues);
+    const institutionalMax = Math.max(...institutionalValues);
+    const breakoutMin = Math.min(...breakoutValues);
+    const breakoutMax = Math.max(...breakoutValues);
+
+    const rankings = filtered
+      .map((item): HedgeFundSignalScore => {
+        const momentumScore = normalizeScore(item.hedgeFactors.momentumRaw, momentumMin, momentumMax);
+        const trendScore = item.hedgeFactors.trendRaw * 100;
+        const volumeScore = normalizeScore(item.hedgeFactors.volumeRaw, volumeMin, volumeMax);
+        const volatilityScore = item.hedgeFactors.volatilityQualityRaw * 100;
+        const sectorScore = sectorScores[item.sector] ?? 50;
+        const institutionalScore = normalizeScore(item.hedgeFactors.institutionalRaw, institutionalMin, institutionalMax);
+        const breakoutScore = normalizeScore(item.hedgeFactors.breakoutRaw, breakoutMin, breakoutMax);
+        const finalScore =
+          0.25 * momentumScore +
+          0.2 * trendScore +
+          0.15 * volumeScore +
+          0.1 * volatilityScore +
+          0.1 * sectorScore +
+          0.1 * institutionalScore +
+          0.1 * breakoutScore;
+
+        return {
+          rank: 0,
+          stockSymbol: item.symbol,
+          sector: item.sector,
+          momentumScore: Number(momentumScore.toFixed(2)),
+          trendScore: Number(trendScore.toFixed(2)),
+          volumeScore: Number(volumeScore.toFixed(2)),
+          volatilityScore: Number(volatilityScore.toFixed(2)),
+          sectorScore: Number(sectorScore.toFixed(2)),
+          institutionalScore: Number(institutionalScore.toFixed(2)),
+          breakoutScore: Number(breakoutScore.toFixed(2)),
+          finalScore: Number(finalScore.toFixed(2)),
+          momentumValue: Number(item.hedgeFactors.momentumRaw.toFixed(2)),
+          orderImbalance: Number(item.orderImbalance.toFixed(2)),
+          breakoutProbability: Number(breakoutScore.toFixed(2))
+        };
+      })
+      .sort((left, right) => right.finalScore - left.finalScore)
+      .slice(0, 100)
+      .map((signal, index) => ({
+        ...signal,
+        rank: index + 1
+      }));
+
+    const sectorStrength = Object.entries(sectorReturns)
+      .map(([sector, averageReturn]) => ({
+        sector,
+        averageReturn: Number((averageReturn * 100).toFixed(2)),
+        sectorScore: Number((sectorScores[sector] ?? 50).toFixed(2)),
+        leaders: rankings.filter((signal) => signal.sector === sector).slice(0, 3).map((signal) => signal.stockSymbol)
+      }))
+      .sort((left, right) => right.sectorScore - left.sectorScore);
+
+    const momentumHeatmap = rankings.slice(0, 18).map((signal) => ({
+      symbol: signal.stockSymbol,
+      sector: signal.sector,
+      momentumScore: signal.momentumScore,
+      finalScore: signal.finalScore,
+      breakoutScore: signal.breakoutScore
+    }));
+
+    return {
+      rankings,
+      sectorStrength,
+      momentumHeatmap,
+      summary: {
+        scannedUniverse: analyzedUniverse.length,
+        returned: rankings.length,
+        averageFinalScore: Number(average(rankings.map((signal) => signal.finalScore)).toFixed(2)),
+        leadingSector: sectorStrength[0]?.sector ?? "N/A",
+        institutionalAccumulationCandidates: rankings.filter((signal) => signal.orderImbalance > 2.5).length
+      }
     };
   };
 
   const buildUltraQuantDashboard = (payload: UltraQuantRequest = {}) => {
     const request = normalizeUltraQuantRequest(payload);
-    const results = createUltraQuantUniverse()
-      .map((profile) => analyzeUltraQuantProfile(profile, request))
+    const analyzedUniverse = createUltraQuantUniverse()
+      .map((profile) => analyzeUltraQuantProfile(profile, request));
+    const results = analyzedUniverse
       .filter((result) => {
         const sectorMatches = request.sectorFilter === "ALL" || !request.sectorFilter || result.sector === request.sectorFilter;
         return sectorMatches &&
@@ -478,6 +727,7 @@ async function startServer() {
           result.volumeGrowth * 100000 >= request.minVolume &&
           result.growthRatio > 4;
       })
+      .map(({ hedgeFactors, ...result }) => result)
       .sort((left, right) => right.score - left.score)
       .slice(0, 100);
 
@@ -502,7 +752,7 @@ async function startServer() {
       .sort((left, right) => right.averageScore - left.averageScore);
 
     const summary = {
-      scannedUniverse: createUltraQuantUniverse().length,
+      scannedUniverse: analyzedUniverse.length,
       returned: results.length,
       historicalPeriodYears: request.historicalPeriodYears,
       avgScore: Number(average(results.map((item) => item.score)).toFixed(2)),
@@ -514,6 +764,7 @@ async function startServer() {
       results,
       alerts,
       sectors,
+      hedgeFundSignals: buildHedgeFundSignalDashboard(analyzedUniverse, request),
       summary,
       architecture: ultraArchitecture
     };
@@ -1553,6 +1804,15 @@ app.post("/api/ai/analyze", withErrorBoundary(async (req, res) => {
       sectorCount: dashboard.sectors.length,
     });
     res.json(dashboard);
+  });
+
+  app.post("/api/ultra-quant/hedge-fund-ranking", (req, res) => {
+    const dashboard = buildUltraQuantDashboard(req.body || {});
+    logAction("ultra_quant.hedge_fund.completed", {
+      filters: req.body || {},
+      resultCount: dashboard.hedgeFundSignals.rankings.length,
+    });
+    res.json(dashboard.hedgeFundSignals);
   });
 
   app.get("/api/ultra-quant/alerts", (req, res) => {

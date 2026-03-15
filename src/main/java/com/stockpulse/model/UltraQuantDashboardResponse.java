@@ -12,6 +12,7 @@ public class UltraQuantDashboardResponse {
     private List<AnalysisResult> results;
     private List<Map<String, Object>> alerts;
     private List<Map<String, Object>> sectors;
+    private HedgeFundSignalDashboard hedgeFundSignals;
     private Map<String, Object> summary;
     private List<Map<String, Object>> architecture;
 }

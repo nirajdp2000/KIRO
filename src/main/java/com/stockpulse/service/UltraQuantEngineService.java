@@ -4,7 +4,9 @@ import com.stockpulse.analyzer.AIPredictionService;
 import com.stockpulse.analyzer.PerformanceEngine;
 import com.stockpulse.analyzer.SignalAggregator;
 import com.stockpulse.model.AnalysisResult;
+import com.stockpulse.model.MarketCandle;
 import com.stockpulse.model.QuantRequest;
+import com.stockpulse.model.StockProfile;
 import com.stockpulse.model.UltraQuantDashboardResponse;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -12,13 +14,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.concurrent.CompletableFuture;
@@ -38,6 +37,8 @@ public class UltraQuantEngineService {
     private final AIPredictionService aiPredictionService;
     private final SignalAggregator signalAggregator;
     private final InstitutionalService institutionalService;
+    private final QuantMarketDataFactoryService quantMarketDataFactoryService;
+    private final HedgeFundSignalScoringService hedgeFundSignalScoringService;
     private final ExecutorService executorService;
     private final ConcurrentHashMap<String, AnalysisResult> cache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, UltraQuantDashboardResponse> dashboardCache = new ConcurrentHashMap<>();
@@ -46,12 +47,16 @@ public class UltraQuantEngineService {
             PerformanceEngine performanceEngine,
             AIPredictionService aiPredictionService,
             SignalAggregator signalAggregator,
-            InstitutionalService institutionalService
+            InstitutionalService institutionalService,
+            QuantMarketDataFactoryService quantMarketDataFactoryService,
+            HedgeFundSignalScoringService hedgeFundSignalScoringService
     ) {
         this.performanceEngine = performanceEngine;
         this.aiPredictionService = aiPredictionService;
         this.signalAggregator = signalAggregator;
         this.institutionalService = institutionalService;
+        this.quantMarketDataFactoryService = quantMarketDataFactoryService;
+        this.hedgeFundSignalScoringService = hedgeFundSignalScoringService;
         this.executorService = Executors.newFixedThreadPool(Math.max(4, Runtime.getRuntime().availableProcessors()));
     }
 
@@ -66,15 +71,19 @@ public class UltraQuantEngineService {
             return cached;
         }
 
-        List<StockProfile> universe = buildUniverse();
+        List<StockProfile> universe = quantMarketDataFactoryService.buildUniverse();
 
         List<CompletableFuture<AnalysisResult>> futures = universe.stream()
                 .map(profile -> CompletableFuture.supplyAsync(() -> analyzeProfile(profile, request), executorService))
                 .toList();
 
-        List<AnalysisResult> ranked = futures.stream()
+        List<AnalysisResult> analyzedUniverse = futures.stream()
                 .map(this::joinSafely)
-                .filter(result -> result != null && passesFilters(result, request))
+                .filter(result -> result != null)
+                .toList();
+
+        List<AnalysisResult> ranked = analyzedUniverse.stream()
+                .filter(result -> passesFilters(result, request))
                 .sorted(Comparator.comparingDouble(AnalysisResult::getScore).reversed())
                 .limit(100)
                 .toList();
@@ -83,6 +92,7 @@ public class UltraQuantEngineService {
                 .results(ranked)
                 .alerts(buildAlerts(ranked))
                 .sectors(buildSectorRotation(ranked))
+                .hedgeFundSignals(hedgeFundSignalScoringService.buildDashboard(request))
                 .summary(buildSummary(ranked, request, universe.size()))
                 .architecture(buildArchitecture())
                 .build();
@@ -92,13 +102,13 @@ public class UltraQuantEngineService {
     }
 
     private AnalysisResult analyzeProfile(StockProfile profile, QuantRequest request) {
-        String cacheKey = profile.symbol() + ":" + request.getHistoricalPeriodYears();
+        String cacheKey = profile.getSymbol() + ":" + request.getHistoricalPeriodYears();
         return cache.computeIfAbsent(cacheKey, key -> buildAnalysis(profile, request));
     }
 
     private AnalysisResult buildAnalysis(StockProfile profile, QuantRequest request) {
-        List<Candle> candles = generateCandles(profile, request.getHistoricalPeriodYears());
-        List<Double> closes = candles.stream().map(Candle::close).toList();
+        List<MarketCandle> candles = quantMarketDataFactoryService.generateCandles(profile, request.getHistoricalPeriodYears());
+        List<Double> closes = candles.stream().map(MarketCandle::getClose).toList();
         List<Double> returns = buildReturns(closes);
         List<Double> ema50 = buildEma(closes, 50);
 
@@ -114,14 +124,14 @@ public class UltraQuantEngineService {
         double trendStrength = performanceEngine.calculateTrendStrength(ema50);
         double volatility = performanceEngine.calculateVolatility(returns);
         double maxDrawdown = performanceEngine.calculateMaxDrawdown(closes);
-        double earningsGrowth = Math.max(0, cagr * 0.72 + normalizedNoise(profile.symbol(), 11) * 18);
-        double revenueGrowth = Math.max(0, cagr * 0.58 + normalizedNoise(profile.symbol(), 19) * 14);
+        double earningsGrowth = Math.max(0, cagr * 0.72 + normalizedNoise(profile.getSymbol(), 11) * 18);
+        double revenueGrowth = Math.max(0, cagr * 0.58 + normalizedNoise(profile.getSymbol(), 19) * 14);
         double volumeGrowth = computeVolumeGrowth(candles);
         double breakoutFrequency = computeBreakoutFrequency(closes);
         double sentimentScore = computeSentimentScore(profile, momentum, growthRatio);
 
         List<Double> last50Prices = closes.subList(Math.max(0, closes.size() - 50), closes.size());
-        List<Candle> last50Candles = candles.subList(Math.max(0, candles.size() - 50), candles.size());
+        List<MarketCandle> last50Candles = candles.subList(Math.max(0, candles.size() - 50), candles.size());
         double priceChange1m = percentageChange(closes, 1);
         double priceChange5m = percentageChange(closes, 5);
         double volumeRatio = recentVolumeRatio(candles);
@@ -139,10 +149,10 @@ public class UltraQuantEngineService {
         String hmmState = aiPredictionService.detectHMMState(volumeRatio, priceChange5m);
         String rlAction = aiPredictionService.getRLAction(endingPrice, trendStrength, sentimentScore / 100.0);
 
-        Map<String, List<Map<String, Double>>> orderBook = generateOrderBook(endingPrice, profile.symbol());
+        Map<String, List<Map<String, Double>>> orderBook = quantMarketDataFactoryService.generateOrderBook(endingPrice, profile.getSymbol());
         Map<String, Object> imbalance = institutionalService.calculateOrderImbalance(orderBook);
         Map<String, Object> volumeProfile = institutionalService.calculateVolumeProfile(
-                candles.stream().map(candle -> Map.of("close", candle.close(), "volume", candle.volume())).toList(),
+                candles.stream().map(candle -> Map.of("close", candle.getClose(), "volume", candle.getVolume())).toList(),
                 Math.max(1.0, endingPrice * 0.0025)
         );
         List<Map<String, Object>> liquidityClusters = institutionalService.calculateLiquidityHeatmap(
@@ -170,10 +180,10 @@ public class UltraQuantEngineService {
         double positionSize = (DEFAULT_CAPITAL * (request.getRiskPercentage() / 100.0)) / stopLossDistance;
 
         return AnalysisResult.builder()
-                .symbol(profile.symbol())
-                .sector(profile.sector())
-                .industry(profile.industry())
-                .marketCap(profile.marketCap())
+                .symbol(profile.getSymbol())
+                .sector(profile.getSector())
+                .industry(profile.getIndustry())
+                .marketCap(profile.getMarketCap())
                 .cagr(cagr)
                 .momentum(momentum)
                 .trendStrength(trendStrength)
@@ -197,7 +207,7 @@ public class UltraQuantEngineService {
                 .liquidityClusters(liquidityClusters)
                 .drawdownProbability(drawdownProbability)
                 .positionSize(positionSize)
-                .alerts(buildPerStockAlerts(profile.symbol(), gradientBoost, volumeRatio, breakoutFrequency, imbalance))
+                .alerts(buildPerStockAlerts(profile.getSymbol(), gradientBoost, volumeRatio, breakoutFrequency, imbalance))
                 .build();
     }
 
@@ -217,76 +227,6 @@ public class UltraQuantEngineService {
                 && Math.abs(result.getTrendStrength()) >= request.getTrendStrengthThreshold()
                 && result.getVolumeGrowth() * 100000 >= request.getMinVolume()
                 && result.getGrowthRatio() > 4.0;
-    }
-
-    private List<StockProfile> buildUniverse() {
-        String[][] sectorMap = {
-                {"Technology", "Software"},
-                {"Financials", "Banking"},
-                {"Energy", "Oil & Gas"},
-                {"Healthcare", "Pharma"},
-                {"Consumer", "Retail"},
-                {"Industrials", "Capital Goods"},
-                {"Telecom", "Digital Networks"},
-                {"Materials", "Metals"}
-        };
-
-        List<String> roots = Arrays.asList(
-                "ALPHA", "NOVA", "ZEN", "ORBIT", "PRIME", "VECTOR", "AURA", "PULSE", "SUMMIT", "QUANT",
-                "TITAN", "VISTA", "RAPID", "FOCUS", "UNITY", "DELTA", "OMEGA", "MATRIX", "ARROW", "GALAXY"
-        );
-
-        List<StockProfile> profiles = new ArrayList<>();
-        int counter = 0;
-        for (String root : roots) {
-            for (int i = 0; i < 30; i++) {
-                String[] sector = sectorMap[counter % sectorMap.length];
-                String symbol = root + (char) ('A' + (i % 26)) + String.format(Locale.US, "%02d", i);
-                double marketCap = 5_000 + ((counter * 137L) % 180_000);
-                double avgVolume = 80_000 + ((counter * 53L) % 2_500_000);
-                profiles.add(new StockProfile(symbol, sector[0], sector[1], marketCap, avgVolume));
-                counter++;
-            }
-        }
-
-        profiles.addAll(List.of(
-                new StockProfile("RELIANCE", "Energy", "Oil & Gas", 175_000, 1_950_000),
-                new StockProfile("TCS", "Technology", "Software", 150_000, 1_250_000),
-                new StockProfile("HDFCBANK", "Financials", "Banking", 130_000, 1_850_000),
-                new StockProfile("INFY", "Technology", "Software", 110_000, 1_720_000),
-                new StockProfile("SUNPHARMA", "Healthcare", "Pharma", 95_000, 910_000)
-        ));
-
-        return profiles;
-    }
-
-    private List<Candle> generateCandles(StockProfile profile, int years) {
-        int totalDays = Math.max(260, years * 252);
-        SplittableRandom random = new SplittableRandom(profile.symbol().hashCode());
-        List<Candle> candles = new ArrayList<>(totalDays);
-        double basePrice = 80 + random.nextDouble(2400);
-        double sectorDrift = switch (profile.sector()) {
-            case "Technology" -> 0.0016;
-            case "Financials" -> 0.0012;
-            case "Healthcare" -> 0.0014;
-            case "Energy" -> 0.0011;
-            default -> 0.0010;
-        };
-
-        LocalDate startDate = LocalDate.now().minusDays(totalDays);
-        double close = basePrice;
-        for (int day = 0; day < totalDays; day++) {
-            double noise = (random.nextDouble() - 0.5) * 0.05;
-            double cyclical = Math.sin(day / 33.0 + random.nextDouble()) * 0.006;
-            double drift = sectorDrift + cyclical + noise;
-            double open = close;
-            close = Math.max(15, close * (1 + drift));
-            double high = Math.max(open, close) * (1 + random.nextDouble(0.001, 0.025));
-            double low = Math.min(open, close) * (1 - random.nextDouble(0.001, 0.022));
-            double volume = profile.averageVolume() * (0.85 + random.nextDouble() * 0.9) * (1 + Math.max(0, drift * 12));
-            candles.add(new Candle(startDate.plusDays(day), open, high, low, close, volume));
-        }
-        return candles;
     }
 
     private List<Double> buildReturns(List<Double> closes) {
@@ -309,10 +249,10 @@ public class UltraQuantEngineService {
         return ema;
     }
 
-    private double computeVolumeGrowth(List<Candle> candles) {
+    private double computeVolumeGrowth(List<MarketCandle> candles) {
         int window = Math.max(20, candles.size() / 10);
-        double early = candles.subList(0, window).stream().mapToDouble(Candle::volume).average().orElse(1.0);
-        double recent = candles.subList(candles.size() - window, candles.size()).stream().mapToDouble(Candle::volume).average().orElse(1.0);
+        double early = candles.subList(0, window).stream().mapToDouble(MarketCandle::getVolume).average().orElse(1.0);
+        double recent = candles.subList(candles.size() - window, candles.size()).stream().mapToDouble(MarketCandle::getVolume).average().orElse(1.0);
         return Math.max(0, recent / early);
     }
 
@@ -332,7 +272,7 @@ public class UltraQuantEngineService {
     }
 
     private double computeSentimentScore(StockProfile profile, double momentum, double growthRatio) {
-        double sectorBias = switch (profile.sector()) {
+        double sectorBias = switch (profile.getSector()) {
             case "Technology" -> 12;
             case "Financials" -> 8;
             case "Healthcare" -> 10;
@@ -351,36 +291,19 @@ public class UltraQuantEngineService {
         return ((current - previous) / previous) * 100.0;
     }
 
-    private double recentVolumeRatio(List<Candle> candles) {
+    private double recentVolumeRatio(List<MarketCandle> candles) {
         int recentWindow = Math.min(10, candles.size());
         int baseWindow = Math.min(50, candles.size());
-        double recent = candles.subList(candles.size() - recentWindow, candles.size()).stream().mapToDouble(Candle::volume).average().orElse(1.0);
-        double base = candles.subList(candles.size() - baseWindow, candles.size()).stream().mapToDouble(Candle::volume).average().orElse(1.0);
+        double recent = candles.subList(candles.size() - recentWindow, candles.size()).stream().mapToDouble(MarketCandle::getVolume).average().orElse(1.0);
+        double base = candles.subList(candles.size() - baseWindow, candles.size()).stream().mapToDouble(MarketCandle::getVolume).average().orElse(1.0);
         return recent / base;
     }
 
-    private double computeVwapDistance(List<Candle> candles, double currentPrice) {
-        double volumeSum = candles.stream().mapToDouble(Candle::volume).sum();
-        double priceVolumeSum = candles.stream().mapToDouble(candle -> candle.close() * candle.volume()).sum();
+    private double computeVwapDistance(List<MarketCandle> candles, double currentPrice) {
+        double volumeSum = candles.stream().mapToDouble(MarketCandle::getVolume).sum();
+        double priceVolumeSum = candles.stream().mapToDouble(candle -> candle.getClose() * candle.getVolume()).sum();
         double vwap = volumeSum == 0 ? currentPrice : priceVolumeSum / volumeSum;
         return ((currentPrice - vwap) / vwap) * 100.0;
-    }
-
-    private Map<String, List<Map<String, Double>>> generateOrderBook(double lastPrice, String symbol) {
-        SplittableRandom random = new SplittableRandom(symbol.hashCode() * 31L);
-        List<Map<String, Double>> bids = new ArrayList<>();
-        List<Map<String, Double>> asks = new ArrayList<>();
-        for (int i = 1; i <= 10; i++) {
-            bids.add(Map.of(
-                    "price", lastPrice - (i * 0.35),
-                    "volume", 2_000 + random.nextDouble(1_000, 10_000) * (i == 1 ? 1.8 : 1.0)
-            ));
-            asks.add(Map.of(
-                    "price", lastPrice + (i * 0.35),
-                    "volume", 1_800 + random.nextDouble(1_000, 8_000) * (i == 1 ? 0.9 : 1.0)
-            ));
-        }
-        return Map.of("bids", bids, "asks", asks);
     }
 
     private double normalizeLstmScore(double prediction, double currentPrice) {
@@ -519,8 +442,4 @@ public class UltraQuantEngineService {
     public void shutdown() {
         executorService.shutdown();
     }
-
-    private record StockProfile(String symbol, String sector, String industry, double marketCap, double averageVolume) {}
-
-    private record Candle(LocalDate date, double open, double high, double low, double close, double volume) {}
 }

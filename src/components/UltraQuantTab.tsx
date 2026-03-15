@@ -13,6 +13,7 @@ import {
   Waves,
   Zap
 } from 'lucide-react';
+import { HedgeFundSignalRanking, type HedgeFundSignalDashboard } from './HedgeFundSignalRanking';
 import { UltraQuantHeatmap } from './UltraQuantHeatmap';
 import { fetchJson } from '../lib/api';
 
@@ -69,6 +70,7 @@ type UltraQuantDashboard = {
     averageScore: number;
     leaders: string[];
   }>;
+  hedgeFundSignals: HedgeFundSignalDashboard;
   summary: {
     scannedUniverse: number;
     returned: number;
@@ -345,6 +347,8 @@ const UltraQuantTab = () => {
           </div>
         </section>
       )}
+
+      <HedgeFundSignalRanking dashboard={dashboard?.hedgeFundSignals ?? null} />
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.5fr_0.9fr_0.9fr]">
         <div className="rounded-[2rem] border border-white/5 bg-zinc-950/70 shadow-2xl shadow-black/30">

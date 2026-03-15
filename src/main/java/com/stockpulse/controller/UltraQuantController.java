@@ -1,8 +1,10 @@
 package com.stockpulse.controller;
 
 import com.stockpulse.model.AnalysisResult;
+import com.stockpulse.model.HedgeFundSignalDashboard;
 import com.stockpulse.model.QuantRequest;
 import com.stockpulse.model.UltraQuantDashboardResponse;
+import com.stockpulse.service.HedgeFundSignalScoringService;
 import com.stockpulse.service.UltraQuantEngineService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,9 +20,14 @@ import java.util.Map;
 public class UltraQuantController {
 
     private final UltraQuantEngineService ultraQuantEngineService;
+    private final HedgeFundSignalScoringService hedgeFundSignalScoringService;
 
-    public UltraQuantController(UltraQuantEngineService ultraQuantEngineService) {
+    public UltraQuantController(
+            UltraQuantEngineService ultraQuantEngineService,
+            HedgeFundSignalScoringService hedgeFundSignalScoringService
+    ) {
         this.ultraQuantEngineService = ultraQuantEngineService;
+        this.hedgeFundSignalScoringService = hedgeFundSignalScoringService;
     }
 
     @PostMapping("/scan")
@@ -41,5 +48,10 @@ public class UltraQuantController {
     @GetMapping("/architecture")
     public List<Map<String, Object>> architecture() {
         return ultraQuantEngineService.buildDashboard(new QuantRequest()).getArchitecture();
+    }
+
+    @PostMapping("/hedge-fund-ranking")
+    public HedgeFundSignalDashboard hedgeFundRanking(@RequestBody QuantRequest request) {
+        return hedgeFundSignalScoringService.buildDashboard(request);
     }
 }
