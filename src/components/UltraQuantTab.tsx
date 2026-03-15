@@ -1,4 +1,4 @@
-import React, { startTransition, useEffect, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   Zap
 } from 'lucide-react';
 import { UltraQuantHeatmap } from './UltraQuantHeatmap';
+import { fetchJson } from '../lib/api';
 
 type AnalysisResult = {
   symbol: string;
@@ -115,28 +116,38 @@ const defaultFilters: Filters = {
 const metricClass = (value: number, threshold: number) =>
   value >= threshold ? 'text-emerald-400' : 'text-zinc-300';
 
+const normalizeFilters = (filters: Filters): Filters => ({
+  historicalPeriodYears: Number.isFinite(filters.historicalPeriodYears) ? Math.min(15, Math.max(1, filters.historicalPeriodYears)) : defaultFilters.historicalPeriodYears,
+  minCagr: Number.isFinite(filters.minCagr) ? filters.minCagr : defaultFilters.minCagr,
+  sectorFilter: filters.sectorFilter || defaultFilters.sectorFilter,
+  minMarketCap: Number.isFinite(filters.minMarketCap) ? Math.max(0, filters.minMarketCap) : defaultFilters.minMarketCap,
+  maxMarketCap: Number.isFinite(filters.maxMarketCap) ? Math.max(0, filters.maxMarketCap) : defaultFilters.maxMarketCap,
+  minVolume: Number.isFinite(filters.minVolume) ? Math.max(0, filters.minVolume) : defaultFilters.minVolume,
+  maxDrawdown: Number.isFinite(filters.maxDrawdown) ? Math.max(0, filters.maxDrawdown) : defaultFilters.maxDrawdown,
+  volatilityThreshold: Number.isFinite(filters.volatilityThreshold) ? Math.max(0, filters.volatilityThreshold) : defaultFilters.volatilityThreshold,
+  breakoutFrequency: Number.isFinite(filters.breakoutFrequency) ? Math.max(0, filters.breakoutFrequency) : defaultFilters.breakoutFrequency,
+  trendStrengthThreshold: Number.isFinite(filters.trendStrengthThreshold) ? Math.max(0, filters.trendStrengthThreshold) : defaultFilters.trendStrengthThreshold,
+  riskPercentage: Number.isFinite(filters.riskPercentage) ? Math.max(0.1, filters.riskPercentage) : defaultFilters.riskPercentage
+});
+
 const UltraQuantTab = () => {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState<UltraQuantDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const runScan = async () => {
+  const runScan = async (nextFilters?: Filters) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/ultra-quant/dashboard', {
+      const sanitizedFilters = normalizeFilters(nextFilters ?? filters);
+      const payload = await fetchJson<UltraQuantDashboard>('/api/ultra-quant/dashboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(filters)
+        body: JSON.stringify(sanitizedFilters)
       });
-
-      if (!response.ok) {
-        throw new Error(`Ultra quant scan failed with status ${response.status}`);
-      }
-
-      const payload = await response.json();
       startTransition(() => {
+        setFilters(sanitizedFilters);
         setDashboard(payload);
       });
     } catch (scanError: any) {
@@ -150,7 +161,11 @@ const UltraQuantTab = () => {
     runScan();
   }, []);
 
-  const topPick = dashboard?.results?.[0];
+  const results = useDeferredValue(dashboard?.results ?? []);
+  const alerts = dashboard?.alerts ?? [];
+  const sectorRows = dashboard?.sectors ?? [];
+  const architectureSteps = dashboard?.architecture ?? [];
+  const topPick = results[0];
 
   return (
     <div className="space-y-8">
@@ -230,9 +245,20 @@ const UltraQuantTab = () => {
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button onClick={runScan} disabled={loading} className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60">
+          <button onClick={() => runScan()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60">
             {loading ? <Activity className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
             {loading ? 'Scanning' : 'Run Ultra Scan'}
+          </button>
+          <button
+            onClick={() => {
+              startTransition(() => {
+                setFilters(defaultFilters);
+              });
+              runScan(defaultFilters);
+            }}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-5 py-3 text-sm font-black uppercase tracking-[0.2em] text-zinc-300 transition hover:border-cyan-400/40 hover:text-white"
+          >
+            Reset Filters
           </button>
           <div className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">
             Risk per trade: {filters.riskPercentage.toFixed(1)}%
@@ -241,7 +267,16 @@ const UltraQuantTab = () => {
         </div>
       </section>
 
-      {dashboard && !loading && dashboard.results.length === 0 && (
+      {loading && (
+        <section className="rounded-[2rem] border border-cyan-500/10 bg-zinc-950/70 p-6 shadow-2xl shadow-black/20">
+          <div className="flex items-center gap-3 text-sm text-zinc-300">
+            <Activity className="h-4 w-4 animate-spin text-cyan-300" />
+            Running the ultra quant scan across the current universe and model stack.
+          </div>
+        </section>
+      )}
+
+      {dashboard && !loading && results.length === 0 && (
         <section className="rounded-[2rem] border border-amber-500/10 bg-amber-500/5 p-6 text-sm leading-6 text-zinc-300 shadow-2xl shadow-black/20">
           No stocks matched the current filter set. Try lowering `Min CAGR`, increasing `Max Drawdown`, or setting `Sector` back to `ALL`.
         </section>
@@ -318,7 +353,7 @@ const UltraQuantTab = () => {
               <TrendingUp className="h-4 w-4 text-cyan-300" />
               Top 100 Bullish Stocks
             </h3>
-            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">{dashboard?.results.length ?? 0} returned</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">{results.length} returned</span>
           </div>
 
           <div className="max-h-[42rem] overflow-auto">
@@ -334,7 +369,7 @@ const UltraQuantTab = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {dashboard?.results.map((stock) => (
+                {results.map((stock) => (
                   <tr key={stock.symbol} className="hover:bg-white/[0.03]">
                     <td className="px-6 py-4">
                       <div className="font-bold text-white">{stock.symbol}</div>
@@ -395,7 +430,7 @@ const UltraQuantTab = () => {
               Sector Rotation
             </h3>
             <div className="mt-5 space-y-3">
-              {dashboard?.sectors.slice(0, 6).map((sector) => (
+              {sectorRows.slice(0, 6).map((sector) => (
                 <div key={sector.sector} className="rounded-2xl border border-white/5 bg-black/20 p-4">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-white">{sector.sector}</span>
@@ -417,7 +452,7 @@ const UltraQuantTab = () => {
               Real-Time Alerts
             </h3>
             <div className="mt-5 space-y-3">
-              {dashboard?.alerts.slice(0, 8).map((alert, index) => (
+              {alerts.slice(0, 8).map((alert, index) => (
                 <div key={`${alert.stockSymbol}-${index}`} className="rounded-2xl border border-rose-500/10 bg-rose-500/5 p-4">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-white">{alert.stockSymbol}</span>
@@ -435,7 +470,7 @@ const UltraQuantTab = () => {
               System Architecture
             </h3>
             <div className="mt-5 space-y-3">
-              {dashboard?.architecture.map((step) => (
+              {architectureSteps.map((step) => (
                 <div key={step.stage} className="rounded-2xl border border-white/5 bg-black/20 p-4">
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-300">{step.stage}</p>
                   <p className="mt-2 text-sm leading-6 text-zinc-400">{step.description}</p>
@@ -446,7 +481,7 @@ const UltraQuantTab = () => {
         </div>
       </section>
 
-      <UltraQuantHeatmap stocks={(dashboard?.results ?? []).slice(0, 18)} />
+      <UltraQuantHeatmap stocks={results.slice(0, 18)} />
 
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-6 shadow-2xl shadow-black/30">

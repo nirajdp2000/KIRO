@@ -1,412 +1,515 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, CartesianGrid, Legend, AreaChart, Area, ComposedChart
-} from 'recharts';
-import { 
-  Activity, Layers, BarChart3, TrendingUp, Globe, 
-  MessageSquare, Zap, Shield, Target, Info, Search, 
-  ArrowUpRight, ArrowDownRight, AlertTriangle, Cpu, 
-  Database, Network, BrainCircuit, BarChartHorizontal
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import Markdown from 'react-markdown';
+import {
+  Activity,
+  AlertTriangle,
+  BarChartHorizontal,
+  BrainCircuit,
+  Cpu,
+  Database,
+  MessageSquare,
+  Network,
+  Shield,
+  Target,
+  TrendingUp,
+  Waves,
+  Zap
 } from 'lucide-react';
-import { InstitutionalService, OrderBook, VolumeProfileNode } from '../services/InstitutionalService';
+import { InstitutionalService, OrderBook, SectorRotationNode, VolumeProfileNode } from '../services/InstitutionalService';
+import { fetchJson } from '../lib/api';
 
 interface InstitutionalAnalyticsProps {
   symbol: string;
-  candles: any[];
+  candles: Array<{ close: number; volume: number }>;
   onAnalyze?: () => void;
+  theme?: 'dark' | 'light';
+  aiAnalysis?: string | null;
+  aiLoading?: boolean;
+  aiConfidence?: number;
+  aiRecommendation?: string | null;
+  aiLastUpdated?: string | null;
+  aiSources?: Array<{ title?: string; url?: string }>;
 }
 
-export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({ symbol, candles, onAnalyze }) => {
-  const [activeTab, setActiveTab] = useState<'order-flow' | 'volume-profile' | 'correlation' | 'sentiment' | 'microstructure'>('order-flow');
+type TabId = 'order-flow' | 'volume-profile' | 'microstructure' | 'sector-rotation' | 'sentiment';
+
+const emptyVolumeProfile = {
+  profile: [] as VolumeProfileNode[],
+  poc: 0,
+  vah: 0,
+  val: 0
+};
+
+export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({
+  symbol,
+  candles,
+  onAnalyze,
+  theme = 'dark',
+  aiAnalysis,
+  aiLoading = false,
+  aiConfidence = 0,
+  aiRecommendation,
+  aiLastUpdated,
+  aiSources = []
+}) => {
+  const [activeTab, setActiveTab] = useState<TabId>('order-flow');
   const [orderBook, setOrderBook] = useState<OrderBook>({ bids: [], asks: [] });
   const [imbalanceData, setImbalanceData] = useState<{ imbalance: number; signal: string; score: number } | null>(null);
-  const [volumeProfile, setVolumeProfile] = useState<{ profile: VolumeProfileNode[]; poc: number; vah: number; val: number } | null>(null);
-  const [marketRegime, setMarketRegime] = useState<'TRENDING' | 'SIDEWAYS' | 'VOLATILE'>('SIDEWAYS');
-  const [correlationData, setCorrelationData] = useState<{ name: string; value: number }[]>([]);
-  const [sentimentScore, setSentimentScore] = useState<number>(72);
+  const [volumeProfile, setVolumeProfile] = useState<{
+    profile: VolumeProfileNode[];
+    poc: number;
+    vah: number;
+    val: number;
+  }>(emptyVolumeProfile);
   const [microstructure, setMicrostructure] = useState({ frequency: 0, spread: 0, accumulation: 0 });
+  const [sectorRotation, setSectorRotation] = useState<SectorRotationNode[]>([]);
+  const [sentimentScore, setSentimentScore] = useState(72);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Simulate real-time order book
+  const isLight = theme === 'light';
+  const shellClass = isLight
+    ? 'bg-white/90 border border-zinc-200 text-zinc-900 shadow-[0_30px_90px_rgba(15,23,42,0.12)]'
+    : 'bg-[#0a0a0a] border border-white/5 text-white shadow-2xl';
+  const panelClass = isLight
+    ? 'bg-zinc-50 border border-zinc-200'
+    : 'bg-white/5 border border-white/5';
+  const subPanelClass = isLight
+    ? 'bg-white border border-zinc-200'
+    : 'bg-black/20 border border-white/5';
+  const mutedClass = isLight ? 'text-zinc-500' : 'text-white/50';
+  const softClass = isLight ? 'text-zinc-600' : 'text-white/40';
+
   useEffect(() => {
-    if (!candles || candles.length === 0) return;
-    
+    if (!candles.length) {
+      setOrderBook({ bids: [], asks: [] });
+      setImbalanceData(null);
+      setVolumeProfile(emptyVolumeProfile);
+      return;
+    }
+
+    let active = true;
     const lastPrice = candles[candles.length - 1].close;
-    
-    const generateOrderBook = async () => {
+
+    const loadOrderFlow = async () => {
       try {
-        const res = await fetch(`/api/institutional/order-book?lastPrice=${lastPrice}`);
-        const ob = await res.json();
-        setOrderBook(ob);
-        const imbalance = await InstitutionalService.calculateOrderImbalance(ob);
+        const [book, profile, micro, rotation] = await Promise.all([
+          fetchJson<OrderBook>(`/api/institutional/order-book?lastPrice=${lastPrice}`),
+          InstitutionalService.calculateVolumeProfile(candles, 2),
+          fetchJson<{ frequency: number; spread: number; accumulation: number }>('/api/institutional/microstructure'),
+          InstitutionalService.getSectorRotation()
+        ]);
+        const imbalance = await InstitutionalService.calculateOrderImbalance(book);
+        if (!active) {
+          return;
+        }
+        setOrderBook(book);
         setImbalanceData(imbalance);
-      } catch (e) {
-        console.error("Failed to generate order book or calculate imbalance", e);
-      }
-    };
-
-    generateOrderBook();
-    const interval = setInterval(generateOrderBook, 3000);
-    return () => clearInterval(interval);
-  }, [candles]);
-
-  // Calculate Volume Profile
-  useEffect(() => {
-    const fetchProfile = async () => {
-      if (candles && candles.length > 0) {
-        try {
-          const vp = await InstitutionalService.calculateVolumeProfile(candles, 2);
-          setVolumeProfile(vp);
-          const regime = await InstitutionalService.detectMarketRegime(candles);
-          setMarketRegime(regime);
-        } catch (e) {
-          console.error("Failed to calculate volume profile or regime", e);
+        setVolumeProfile(profile);
+        setMicrostructure(micro);
+        setSectorRotation(rotation);
+        setSentimentScore(Math.min(95, Math.max(35, Math.round((micro.accumulation + (rotation[0]?.strength ?? 50)) / 2))));
+        setLoadError(null);
+      } catch (error: any) {
+        if (active) {
+          setLoadError(error.message || 'Unable to refresh institutional analytics');
         }
       }
     };
-    fetchProfile();
-  }, [candles]);
 
-  // Simulate Correlation
-  useEffect(() => {
-    const fetchCorrelation = async () => {
-      try {
-        const res = await fetch(`/api/institutional/correlation-data?symbol=${symbol}`);
-        const data = await res.json();
-        setCorrelationData(data);
-      } catch (e) {
-        console.error("Failed to fetch correlation data", e);
-      }
+    loadOrderFlow();
+    const intervalId = window.setInterval(loadOrderFlow, 4000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
     };
-    fetchCorrelation();
-  }, [symbol]);
+  }, [candles, symbol]);
 
-  // Simulate Microstructure
-  useEffect(() => {
-    const fetchMicrostructure = async () => {
-      try {
-        const res = await fetch('/api/institutional/microstructure');
-        const data = await res.json();
-        setMicrostructure(data);
-      } catch (e) {
-        console.error("Failed to fetch microstructure data", e);
-      }
+  const derived = useMemo(() => {
+    const bestBid = orderBook.bids[0]?.price ?? 0;
+    const bestAsk = orderBook.asks[0]?.price ?? 0;
+    const support = [...orderBook.bids].sort((left, right) => right.volume - left.volume)[0];
+    const resistance = [...orderBook.asks].sort((left, right) => right.volume - left.volume)[0];
+    const spread = Math.max(0, bestAsk - bestBid);
+    const accumulationBias = ((imbalanceData?.score ?? 50) * 0.6) + (microstructure.accumulation * 0.4);
+
+    return {
+      bestBid,
+      bestAsk,
+      support,
+      resistance,
+      spread,
+      accumulationBias,
+      liquidityGap: spread + ((resistance?.price ?? bestAsk) - (support?.price ?? bestBid))
     };
-    
-    fetchMicrostructure();
-    const interval = setInterval(fetchMicrostructure, 2000);
-    return () => clearInterval(interval);
-  }, []);
+  }, [imbalanceData, microstructure.accumulation, orderBook]);
 
-  const tabs = [
+  const tabs: Array<{ id: TabId; label: string; icon: React.ComponentType<{ size?: number }> }> = [
     { id: 'order-flow', label: 'Order Flow', icon: Activity },
     { id: 'volume-profile', label: 'Volume Profile', icon: BarChartHorizontal },
     { id: 'microstructure', label: 'Microstructure', icon: Cpu },
-    { id: 'correlation', label: 'Correlation', icon: Network },
-    { id: 'sentiment', label: 'Sentiment', icon: BrainCircuit },
+    { id: 'sector-rotation', label: 'Sector Rotation', icon: Waves },
+    { id: 'sentiment', label: 'Sentiment', icon: BrainCircuit }
   ];
 
+  const heatmapData = [...orderBook.bids, ...orderBook.asks].sort((left, right) => left.price - right.price);
+  const canAnalyze = Boolean(onAnalyze && candles.length > 0);
+
   return (
-    <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
-      {/* Header */}
-      <div className="p-6 border-bottom border-white/5 bg-gradient-to-r from-emerald-500/10 to-transparent flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400">
-            <Shield size={20} />
-          </div>
+    <div className={`overflow-hidden rounded-[2rem] ${shellClass}`}>
+      <div className={`border-b px-6 py-6 ${isLight ? 'border-zinc-200 bg-gradient-to-r from-emerald-500/10 to-cyan-500/5' : 'border-white/5 bg-gradient-to-r from-emerald-500/10 to-transparent'}`}>
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Institutional Intelligence Engine</h2>
-            <p className="text-xs text-white/50 font-mono uppercase tracking-widest">Market Microstructure & Order Flow Analysis</p>
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                <Shield size={20} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black tracking-tight">Institutional Intelligence Engine</h2>
+                <p className={`text-[11px] font-mono uppercase tracking-[0.25em] ${mutedClass}`}>
+                  Order flow, liquidity, volume profile, and sector sponsorship
+                </p>
+              </div>
+            </div>
+            {loadError && (
+              <div className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-bold ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/10 text-amber-300'}`}>
+                <AlertTriangle size={14} />
+                {loadError}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${isLight ? 'bg-cyan-100 text-cyan-700' : 'bg-cyan-500/10 text-cyan-300'}`}>
+              {symbol} Desk
+            </div>
+            <button
+              onClick={onAnalyze}
+              disabled={!canAnalyze || aiLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {aiLoading ? <Activity size={14} className="animate-spin" /> : <BrainCircuit size={14} />}
+              {aiLoading ? 'Scanning' : 'AI Deep Scan'}
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-tighter uppercase ${
-            marketRegime === 'TRENDING' ? 'bg-emerald-500/20 text-emerald-400' :
-            marketRegime === 'VOLATILE' ? 'bg-amber-500/20 text-amber-400' :
-            'bg-blue-500/20 text-blue-400'
-          }`}>
-            Regime: {marketRegime}
+
+        {!canAnalyze && (
+          <div className={`mt-4 rounded-2xl px-4 py-3 text-[11px] font-bold ${isLight ? 'bg-zinc-100 text-zinc-700' : 'bg-white/5 text-zinc-400'}`}>
+            Load a stock and fetch historical candles from the Analytics tab to enable AI Deep Scan.
           </div>
-          <button 
-            onClick={onAnalyze}
-            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black text-xs font-bold rounded-lg transition-all flex items-center gap-2"
-          >
-            <BrainCircuit size={14} />
-            AI DEEP SCAN
-          </button>
+        )}
+
+        <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <div className={`rounded-2xl p-4 ${panelClass}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Support Cluster</p>
+            <p className="mt-2 text-lg font-black text-emerald-400">Rs {(derived.support?.price ?? derived.bestBid).toFixed(2)}</p>
+            <p className={`text-[10px] ${mutedClass}`}>{(derived.support?.volume ?? 0).toLocaleString()} bid volume</p>
+          </div>
+          <div className={`rounded-2xl p-4 ${panelClass}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Resistance Cluster</p>
+            <p className="mt-2 text-lg font-black text-rose-400">Rs {(derived.resistance?.price ?? derived.bestAsk).toFixed(2)}</p>
+            <p className={`text-[10px] ${mutedClass}`}>{(derived.resistance?.volume ?? 0).toLocaleString()} ask volume</p>
+          </div>
+          <div className={`rounded-2xl p-4 ${panelClass}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Liquidity Gap</p>
+            <p className="mt-2 text-lg font-black text-cyan-400">{derived.liquidityGap.toFixed(2)}</p>
+            <p className={`text-[10px] ${mutedClass}`}>Spread plus cluster separation</p>
+          </div>
+          <div className={`rounded-2xl p-4 ${panelClass}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Accumulation Bias</p>
+            <p className="mt-2 text-lg font-black text-amber-300">{derived.accumulationBias.toFixed(0)}</p>
+            <p className={`text-[10px] ${mutedClass}`}>{derived.accumulationBias >= 75 ? 'Institutional accumulation' : 'Balanced participation'}</p>
+          </div>
         </div>
       </div>
 
-      {/* Navigation */}
-      <div className="flex border-bottom border-white/5 bg-white/2">
+      {(aiAnalysis || aiLoading) && (
+        <div className={`border-b px-6 py-6 ${isLight ? 'border-zinc-200 bg-zinc-50/70' : 'border-white/5 bg-black/20'}`}>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-[0.2em]">Institutional AI Deep Scan</h3>
+              <p className={`mt-1 text-[11px] ${mutedClass}`}>
+                {aiLastUpdated ? `Updated ${aiLastUpdated}` : 'Awaiting scan output'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {aiRecommendation && (
+                <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
+                  aiRecommendation === 'BUY'
+                    ? 'bg-emerald-500/15 text-emerald-400'
+                    : aiRecommendation === 'SELL'
+                      ? 'bg-rose-500/15 text-rose-400'
+                      : isLight
+                        ? 'bg-zinc-200 text-zinc-700'
+                        : 'bg-white/10 text-zinc-300'
+                }`}>
+                  {aiRecommendation}
+                </span>
+              )}
+              <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${isLight ? 'bg-cyan-100 text-cyan-700' : 'bg-cyan-500/10 text-cyan-300'}`}>
+                Confidence {aiConfidence}%
+              </span>
+            </div>
+          </div>
+
+          {aiLoading ? (
+            <div className={`rounded-2xl p-5 ${panelClass}`}>
+              <div className="flex items-center gap-3">
+                <Activity size={18} className="animate-spin text-emerald-400" />
+                <span className={mutedClass}>Running the scan across the latest candles and quant context.</span>
+              </div>
+            </div>
+          ) : aiAnalysis ? (
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+              <div className={`rounded-2xl p-5 ${panelClass}`}>
+                <div className={`prose max-w-none ${isLight ? 'prose-zinc' : 'prose-invert'}`}>
+                  <Markdown>{aiAnalysis}</Markdown>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className={`rounded-2xl p-5 ${panelClass}`}>
+                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Execution Lens</h4>
+                  <p className={`mt-3 text-sm leading-6 ${mutedClass}`}>
+                    The deep scan blends recent candles, market sentiment, and institutional flow context so the desk can still produce a recommendation even when external AI is unavailable.
+                  </p>
+                </div>
+                {aiSources.length > 0 && (
+                  <div className={`rounded-2xl p-5 ${panelClass}`}>
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">Grounding Sources</h4>
+                    <div className="mt-3 space-y-3">
+                      {aiSources.slice(0, 4).map((source, index) => (
+                        <a
+                          key={`${source.url ?? source.title ?? index}`}
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`block rounded-xl px-3 py-3 text-sm transition ${subPanelClass} hover:border-cyan-400/30`}
+                        >
+                          <p className="font-bold">{source.title ?? 'Source'}</p>
+                          <p className={`mt-1 text-[11px] break-all ${mutedClass}`}>{source.url}</p>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <div className={`flex flex-wrap border-b ${isLight ? 'border-zinc-200 bg-zinc-50/80' : 'border-white/5 bg-white/2'}`}>
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`flex-1 py-4 flex flex-col items-center gap-2 transition-all relative ${
-              activeTab === tab.id ? 'text-emerald-400' : 'text-white/40 hover:text-white/60'
+            onClick={() => setActiveTab(tab.id)}
+            className={`relative flex min-w-[8rem] flex-1 items-center justify-center gap-2 px-3 py-4 text-[11px] font-black uppercase tracking-[0.18em] transition ${
+              activeTab === tab.id
+                ? 'text-emerald-400'
+                : isLight
+                  ? 'text-zinc-500 hover:text-zinc-900'
+                  : 'text-white/40 hover:text-white/70'
             }`}
           >
-            <tab.icon size={18} />
-            <span className="text-[10px] font-bold uppercase tracking-widest">{tab.label}</span>
-            {activeTab === tab.id && (
-              <motion.div 
-                layoutId="activeTab"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500"
-              />
-            )}
+            <tab.icon size={16} />
+            {tab.label}
+            {activeTab === tab.id && <motion.div layoutId="institutional-active-tab" className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-emerald-500" />}
           </button>
         ))}
       </div>
 
-      {/* Content Area */}
-      <div className="p-6 min-h-[400px]">
+      <div className="min-h-[420px] p-6">
         <AnimatePresence mode="wait">
           {activeTab === 'order-flow' && (
-            <motion.div 
-              key="order-flow"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-6"
-            >
+            <motion.div key="order-flow" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <div className="space-y-4">
-                <div className="p-4 bg-white/5 rounded-xl border border-white/5">
-                  <div className="flex justify-between items-end mb-2">
-                    <span className="text-xs text-white/40 uppercase font-bold tracking-widest">Imbalance Score</span>
-                    <span className="text-2xl font-black text-emerald-400">{imbalanceData?.imbalance.toFixed(2)}x</span>
+                <div className={`rounded-2xl p-5 ${panelClass}`}>
+                  <div className="flex items-end justify-between gap-4">
+                    <div>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Order Imbalance</p>
+                      <p className="mt-2 text-3xl font-black text-emerald-400">{(imbalanceData?.imbalance ?? 0).toFixed(2)}x</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-400">{imbalanceData?.signal ?? 'NEUTRAL'}</p>
+                      <p className={`text-[10px] ${mutedClass}`}>Score {(imbalanceData?.score ?? 0).toFixed(0)}</p>
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-emerald-500 transition-all duration-1000" 
-                      style={{ width: `${Math.min(100, (imbalanceData?.imbalance || 0) * 20)}%` }}
-                    />
+                  <div className={`mt-4 h-2 overflow-hidden rounded-full ${isLight ? 'bg-zinc-200' : 'bg-white/5'}`}>
+                    <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-700" style={{ width: `${Math.min(100, imbalanceData?.score ?? 0)}%` }} />
                   </div>
-                  <p className="mt-3 text-[10px] font-mono text-emerald-400/80 uppercase tracking-widest flex items-center gap-2">
-                    <Zap size={10} /> {imbalanceData?.signal}
-                  </p>
                 </div>
 
-                <div className="bg-white/5 rounded-xl border border-white/5 overflow-hidden">
-                  <div className="p-3 bg-white/5 border-bottom border-white/5 flex justify-between items-center">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">Order Book Depth</span>
-                    <span className="text-[10px] font-mono text-white/40">Real-time Feed</span>
-                  </div>
-                  <div className="p-4 space-y-1">
-                    {orderBook.asks.slice(0, 5).reverse().map((ask, i) => (
-                      <div key={`ask-${i}`} className="flex justify-between text-[10px] font-mono relative">
-                        <div className="absolute inset-0 bg-red-500/5" style={{ width: `${(ask.volume / 10000) * 100}%`, left: 'auto', right: 0 }} />
-                        <span className="text-red-400 z-10">{ask.price.toFixed(2)}</span>
-                        <span className="text-white/40 z-10">{ask.volume.toLocaleString()}</span>
-                      </div>
-                    ))}
-                    <div className="py-2 border-y border-white/10 text-center">
-                      <span className="text-xs font-bold text-white tracking-widest">SPREAD: {(orderBook.asks[0]?.price - orderBook.bids[0]?.price).toFixed(2)}</span>
+                <div className={`rounded-2xl p-5 ${panelClass}`}>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className={`rounded-xl p-3 ${subPanelClass}`}>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Best Bid</p>
+                      <p className="mt-2 text-sm font-black text-emerald-400">Rs {derived.bestBid.toFixed(2)}</p>
                     </div>
-                    {orderBook.bids.slice(0, 5).map((bid, i) => (
-                      <div key={`bid-${i}`} className="flex justify-between text-[10px] font-mono relative">
-                        <div className="absolute inset-0 bg-emerald-500/5" style={{ width: `${(bid.volume / 10000) * 100}%` }} />
-                        <span className="text-emerald-400 z-10">{bid.price.toFixed(2)}</span>
-                        <span className="text-white/40 z-10">{bid.volume.toLocaleString()}</span>
-                      </div>
-                    ))}
+                    <div className={`rounded-xl p-3 ${subPanelClass}`}>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Best Ask</p>
+                      <p className="mt-2 text-sm font-black text-rose-400">Rs {derived.bestAsk.toFixed(2)}</p>
+                    </div>
+                    <div className={`rounded-xl p-3 ${subPanelClass}`}>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Spread</p>
+                      <p className="mt-2 text-sm font-black text-cyan-400">{derived.spread.toFixed(2)}</p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white/5 rounded-xl border border-white/5 p-4 flex flex-col">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-white/60 mb-4">Liquidity Heatmap</h3>
-                <div className="flex-1 min-h-[250px]">
+              <div className={`rounded-2xl p-5 ${panelClass}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-[0.2em]">Liquidity Heatmap</h3>
+                    <p className={`mt-1 text-[11px] ${mutedClass}`}>Support clusters, resistance stacks, and price voids</p>
+                  </div>
+                  <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/10 text-blue-300'}`}>
+                    <Network size={12} className="inline-block mr-1" />
+                    Live
+                  </div>
+                </div>
+
+                <div className="mt-5 h-[290px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={[...orderBook.bids, ...orderBook.asks].sort((a,b) => a.price - b.price)} layout="vertical">
+                    <BarChart data={heatmapData} layout="vertical">
                       <XAxis type="number" hide />
                       <YAxis dataKey="price" type="number" domain={['auto', 'auto']} hide />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
-                        itemStyle={{ color: '#10b981' }}
-                      />
-                      <Bar dataKey="volume" radius={[0, 4, 4, 0]}>
-                        {([...orderBook.bids, ...orderBook.asks].sort((a,b) => a.price - b.price)).map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.price < (candles[candles.length-1]?.close || 0) ? '#10b981' : '#ef4444'} fillOpacity={0.3} />
+                      <Tooltip contentStyle={{ backgroundColor: isLight ? '#ffffff' : '#111827', border: `1px solid ${isLight ? '#e4e4e7' : 'rgba(255,255,255,0.1)'}`, borderRadius: '12px' }} />
+                      <Bar dataKey="volume" radius={[0, 6, 6, 0]}>
+                        {heatmapData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.price <= (candles[candles.length - 1]?.close ?? 0) ? '#10b981' : '#f43f5e'} fillOpacity={0.32} />
                         ))}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <div className="p-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
-                    <span className="block text-[8px] uppercase text-emerald-400/60 font-bold">Support Zone</span>
-                    <span className="text-xs font-mono text-emerald-400">₹{orderBook.bids[0]?.price.toFixed(2)}</span>
-                  </div>
-                  <div className="p-2 bg-red-500/5 border border-red-500/10 rounded-lg">
-                    <span className="block text-[8px] uppercase text-red-400/60 font-bold">Resistance Zone</span>
-                    <span className="text-xs font-mono text-red-400">₹{orderBook.asks[0]?.price.toFixed(2)}</span>
-                  </div>
                 </div>
               </div>
             </motion.div>
           )}
 
           {activeTab === 'volume-profile' && (
-            <motion.div 
-              key="volume-profile"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="h-[400px] flex flex-col"
-            >
-              <div className="flex justify-between items-center mb-6">
-                <div className="flex gap-6">
-                  <div>
-                    <span className="block text-[8px] uppercase text-white/40 font-bold tracking-widest">Point of Control</span>
-                    <span className="text-lg font-black text-emerald-400">₹{volumeProfile?.poc.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] uppercase text-white/40 font-bold tracking-widest">Value Area High</span>
-                    <span className="text-lg font-black text-white/80">₹{volumeProfile?.vah.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] uppercase text-white/40 font-bold tracking-widest">Value Area Low</span>
-                    <span className="text-lg font-black text-white/80">₹{volumeProfile?.val.toFixed(2)}</span>
-                  </div>
+            <motion.div key="volume-profile" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} className="space-y-6">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className={`rounded-2xl p-4 ${panelClass}`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>POC</p>
+                  <p className="mt-2 text-2xl font-black text-emerald-400">Rs {volumeProfile.poc.toFixed(2)}</p>
                 </div>
-                <div className="text-right">
-                  <span className="block text-[8px] uppercase text-white/40 font-bold tracking-widest">VA Status</span>
-                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Price in Value Area</span>
+                <div className={`rounded-2xl p-4 ${panelClass}`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>VAH</p>
+                  <p className="mt-2 text-2xl font-black">Rs {volumeProfile.vah.toFixed(2)}</p>
+                </div>
+                <div className={`rounded-2xl p-4 ${panelClass}`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>VAL</p>
+                  <p className="mt-2 text-2xl font-black">Rs {volumeProfile.val.toFixed(2)}</p>
+                </div>
+                <div className={`rounded-2xl p-4 ${panelClass}`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Auction</p>
+                  <p className="mt-2 text-sm font-black text-cyan-400">{(candles[candles.length - 1]?.close ?? 0) >= volumeProfile.val && (candles[candles.length - 1]?.close ?? 0) <= volumeProfile.vah ? 'Inside Value' : 'Outside Value'}</p>
                 </div>
               </div>
-              
-              <div className="flex-1">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={volumeProfile?.profile} layout="vertical" margin={{ left: 40 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="price" type="number" domain={['auto', 'auto']} stroke="rgba(255,255,255,0.3)" fontSize={10} />
-                    <Tooltip 
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                      contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
-                    />
-                    <Bar dataKey="volume" radius={[0, 4, 4, 0]}>
-                      {volumeProfile?.profile.map((entry, index) => (
-                        <Cell 
-                          key={`cell-${index}`} 
-                          fill={entry.isPOC ? '#10b981' : (entry.isInValueArea ? '#3b82f6' : '#4b5563')} 
-                          fillOpacity={entry.isPOC ? 1 : 0.4}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+
+              <div className={`rounded-2xl p-5 ${panelClass}`}>
+                <div className="h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={volumeProfile.profile} layout="vertical" margin={{ left: 20 }}>
+                      <XAxis type="number" hide />
+                      <YAxis dataKey="price" type="number" domain={['auto', 'auto']} stroke={isLight ? '#71717a' : 'rgba(255,255,255,0.3)'} fontSize={10} />
+                      <Tooltip cursor={{ fill: isLight ? 'rgba(24,24,27,0.04)' : 'rgba(255,255,255,0.05)' }} contentStyle={{ backgroundColor: isLight ? '#ffffff' : '#111827', border: `1px solid ${isLight ? '#e4e4e7' : 'rgba(255,255,255,0.1)'}`, borderRadius: '12px' }} />
+                      <Bar dataKey="volume" radius={[0, 6, 6, 0]}>
+                        {volumeProfile.profile.map((entry, index) => (
+                          <Cell key={`profile-${index}`} fill={entry.isPOC ? '#10b981' : entry.isInValueArea ? '#0ea5e9' : '#71717a'} fillOpacity={entry.isPOC ? 1 : 0.45} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </motion.div>
           )}
 
           {activeTab === 'microstructure' && (
-            <motion.div 
-              key="microstructure"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="grid grid-cols-1 md:grid-cols-3 gap-6"
-            >
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center space-y-4">
-                <div className="w-16 h-16 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400">
-                  <Activity size={32} />
-                </div>
-                <div>
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-white/40">Trade Frequency</h4>
-                  <p className="text-3xl font-black text-white">{microstructure.frequency} <span className="text-xs font-normal text-white/40">t/min</span></p>
-                </div>
-                <p className="text-[10px] text-blue-400/60 font-mono">ALGORITHMIC INTENSITY: HIGH</p>
+            <motion.div key="microstructure" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="grid grid-cols-1 gap-6 md:grid-cols-3">
+              <div className={`rounded-2xl p-6 text-center ${panelClass}`}>
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/10 text-blue-400"><Activity size={30} /></div>
+                <p className={`mt-4 text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Trade Frequency</p>
+                <p className="mt-2 text-3xl font-black">{microstructure.frequency}</p>
+                <p className={`mt-2 text-[10px] font-mono uppercase tracking-[0.18em] ${mutedClass}`}>Ticks per minute</p>
               </div>
-
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center space-y-4">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                  <Target size={32} />
-                </div>
-                <div>
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-white/40">Accumulation Score</h4>
-                  <p className="text-3xl font-black text-white">{microstructure.accumulation}%</p>
-                </div>
-                <p className="text-[10px] text-emerald-400/60 font-mono">SMART MONEY PHASE: ACTIVE</p>
+              <div className={`rounded-2xl p-6 text-center ${panelClass}`}>
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-400"><Cpu size={30} /></div>
+                <p className={`mt-4 text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Spread Dynamics</p>
+                <p className="mt-2 text-3xl font-black">{microstructure.spread.toFixed(3)}%</p>
+                <p className={`mt-2 text-[10px] font-mono uppercase tracking-[0.18em] ${mutedClass}`}>Liquidity depth stable</p>
               </div>
-
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center space-y-4">
-                <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400">
-                  <Layers size={32} />
-                </div>
-                <div>
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-white/40">Spread Dynamics</h4>
-                  <p className="text-3xl font-black text-white">{microstructure.spread.toFixed(3)}%</p>
-                </div>
-                <p className="text-[10px] text-amber-400/60 font-mono">LIQUIDITY DEPTH: STABLE</p>
-              </div>
-
-              <div className="md:col-span-3 p-6 bg-white/5 rounded-2xl border border-white/5">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-white/60 mb-6">Trade Size Distribution</h3>
-                <div className="h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={[
-                      { size: '1-10', count: 450 },
-                      { size: '10-50', count: 320 },
-                      { size: '50-200', count: 180 },
-                      { size: '200-1000', count: 95 },
-                      { size: '1000+', count: 42 },
-                    ]}>
-                      <XAxis dataKey="size" stroke="rgba(255,255,255,0.3)" fontSize={10} />
-                      <YAxis hide />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
-                      />
-                      <Area type="monotone" dataKey="count" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-4 flex items-center gap-2 text-[10px] text-white/40 uppercase font-bold tracking-widest">
-                  <Info size={12} />
-                  Institutional block trades detected in the 1000+ category.
-                </div>
+              <div className={`rounded-2xl p-6 text-center ${panelClass}`}>
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400"><Target size={30} /></div>
+                <p className={`mt-4 text-[10px] font-bold uppercase tracking-[0.2em] ${softClass}`}>Accumulation Score</p>
+                <p className="mt-2 text-3xl font-black">{microstructure.accumulation}%</p>
+                <p className={`mt-2 text-[10px] font-mono uppercase tracking-[0.18em] ${mutedClass}`}>Smart money phase active</p>
               </div>
             </motion.div>
           )}
 
-          {activeTab === 'correlation' && (
-            <motion.div 
-              key="correlation"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-6"
-            >
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white/5 rounded-2xl border border-white/5 p-6">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-white/60 mb-6">Cross-Asset Correlation Matrix</h3>
-                  <div className="space-y-4">
-                    {correlationData.map((asset, i) => (
-                      <div key={i} className="space-y-1">
-                        <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
-                          <span className="text-white/60">{asset.name}</span>
-                          <span className={asset.value > 0.8 ? 'text-emerald-400' : 'text-white/40'}>{(asset.value * 100).toFixed(0)}%</span>
+          {activeTab === 'sector-rotation' && (
+            <motion.div key="sector-rotation" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className={`rounded-2xl p-6 ${panelClass}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-[0.2em]">Sector Rotation Dashboard</h3>
+                  <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/10 text-blue-300'}`}>Leadership Map</div>
+                </div>
+                <div className="mt-6 space-y-4">
+                  {sectorRotation.map((sector) => (
+                    <div key={sector.sector} className={`rounded-2xl p-4 ${subPanelClass}`}>
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-black">{sector.sector}</p>
+                          <p className={`text-[11px] ${mutedClass}`}>Leader {sector.leader} | {sector.flow}</p>
                         </div>
-                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full transition-all duration-1000 ${asset.value > 0.8 ? 'bg-emerald-500' : 'bg-white/20'}`}
-                            style={{ width: `${asset.value * 100}%` }}
-                          />
+                        <div className="text-right">
+                          <p className="text-lg font-black text-emerald-400">{sector.strength.toFixed(0)}</p>
+                          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${softClass}`}>{sector.bias}</p>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div className={`mt-3 h-2 overflow-hidden rounded-full ${isLight ? 'bg-zinc-200' : 'bg-white/5'}`}>
+                        <div className="h-full bg-gradient-to-r from-cyan-400 to-emerald-500" style={{ width: `${sector.strength}%` }} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
+              </div>
 
-                <div className="bg-white/5 rounded-2xl border border-white/5 p-6 flex flex-col items-center justify-center text-center">
-                  <div className="w-24 h-24 rounded-full border-4 border-emerald-500/20 flex items-center justify-center mb-4">
-                    <Globe className="text-emerald-400 animate-pulse" size={40} />
+              <div className={`rounded-2xl p-6 ${panelClass}`}>
+                <h3 className="text-sm font-black uppercase tracking-[0.2em]">Institutional Footprint</h3>
+                <div className="mt-6 space-y-4">
+                  <div className={`rounded-2xl p-4 ${subPanelClass}`}>
+                    <div className="flex items-center gap-3">
+                      <TrendingUp className="text-emerald-400" size={18} />
+                      <div>
+                        <p className="text-sm font-black">{sectorRotation[0]?.sector ?? 'N/A'}</p>
+                        <p className={`text-[11px] ${mutedClass}`}>Top sector by relative strength and sponsorship</p>
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-black text-white mb-2">Leading Indicator Detected</h3>
-                  <p className="text-xs text-white/50 max-w-[250px]">
-                    Strong positive correlation (0.92) with <span className="text-emerald-400 font-bold">BANK NIFTY</span> suggests sectoral leadership.
-                  </p>
-                  <div className="mt-6 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
-                    Signal: Sectoral Rotation Inbound
+                  <div className={`rounded-2xl p-4 ${subPanelClass}`}>
+                    <div className="flex items-center gap-3">
+                      <Zap className="text-cyan-400" size={18} />
+                      <div>
+                        <p className="text-sm font-black">{sectorRotation[1]?.sector ?? 'N/A'}</p>
+                        <p className={`text-[11px] ${mutedClass}`}>Improving breadth and faster intraday accumulation</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`rounded-2xl p-4 ${subPanelClass}`}>
+                    <div className="flex items-center gap-3">
+                      <Network className="text-amber-400" size={18} />
+                      <div>
+                        <p className="text-sm font-black">Accumulation Bias {derived.accumulationBias.toFixed(0)}</p>
+                        <p className={`text-[11px] ${mutedClass}`}>Liquidity sponsorship remains {derived.accumulationBias >= 75 ? 'constructive' : 'mixed'}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -414,45 +517,38 @@ export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({ 
           )}
 
           {activeTab === 'sentiment' && (
-            <motion.div 
-              key="sentiment"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="space-y-6"
-            >
-              <div className="p-8 bg-gradient-to-br from-emerald-500/10 to-blue-500/10 rounded-3xl border border-white/5 flex flex-col items-center text-center">
-                <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-emerald-400 mb-4">NLP Sentiment Score</div>
-                <div className="text-7xl font-black text-white mb-4">{sentimentScore}</div>
-                <div className="flex gap-2 mb-8">
-                  {Array.from({ length: 10 }).map((_, i) => (
-                    <div 
-                      key={i} 
-                      className={`w-2 h-8 rounded-full ${i < sentimentScore / 10 ? 'bg-emerald-500' : 'bg-white/10'}`} 
-                    />
+            <motion.div key="sentiment" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
+              <div className={`rounded-[2rem] p-8 text-center ${isLight ? 'bg-gradient-to-br from-emerald-50 to-cyan-50 border border-zinc-200' : 'bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-white/5'}`}>
+                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">NLP Sentiment Score</div>
+                <div className="mt-4 text-7xl font-black">{sentimentScore}</div>
+                <div className="mt-5 flex justify-center gap-2">
+                  {Array.from({ length: 10 }).map((_, index) => (
+                    <div key={index} className={`h-8 w-2 rounded-full ${index < sentimentScore / 10 ? 'bg-emerald-500' : isLight ? 'bg-zinc-200' : 'bg-white/10'}`} />
                   ))}
                 </div>
-                <p className="text-sm text-white/60 max-w-md leading-relaxed">
-                  Institutional sentiment is <span className="text-emerald-400 font-bold">OVERWHELMINGLY BULLISH</span> based on recent earnings calls and social media velocity.
-                </p>
+                <p className={`mx-auto mt-6 max-w-xl text-sm leading-6 ${mutedClass}`}>Institutional sentiment is being blended from accumulation, sector leadership, and liquidity sponsorship instead of a single headline feed.</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
-                    <MessageSquare size={20} />
-                  </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className={`flex items-center gap-4 rounded-2xl p-4 ${panelClass}`}>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400"><MessageSquare size={18} /></div>
                   <div>
-                    <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Social Velocity</div>
-                    <div className="text-sm font-bold text-white">+240% vs Avg</div>
+                    <div className={`text-[10px] font-bold uppercase tracking-[0.18em] ${softClass}`}>Social Velocity</div>
+                    <div className="text-sm font-black">+240% vs avg</div>
                   </div>
                 </div>
-                <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                    <TrendingUp size={20} />
-                  </div>
+                <div className={`flex items-center gap-4 rounded-2xl p-4 ${panelClass}`}>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><TrendingUp size={18} /></div>
                   <div>
-                    <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest">News Bias</div>
-                    <div className="text-sm font-bold text-white">82% Positive</div>
+                    <div className={`text-[10px] font-bold uppercase tracking-[0.18em] ${softClass}`}>News Bias</div>
+                    <div className="text-sm font-black">82% positive</div>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-4 rounded-2xl p-4 ${panelClass}`}>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400"><Database size={18} /></div>
+                  <div>
+                    <div className={`text-[10px] font-bold uppercase tracking-[0.18em] ${softClass}`}>Accumulation State</div>
+                    <div className="text-sm font-black">{derived.accumulationBias >= 75 ? 'Accumulation' : 'Balanced'}</div>
                   </div>
                 </div>
               </div>
@@ -461,21 +557,18 @@ export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({ 
         </AnimatePresence>
       </div>
 
-      {/* Footer Stats */}
-      <div className="px-6 py-4 bg-white/2 border-top border-white/5 flex justify-between items-center">
-        <div className="flex gap-6">
+      <div className={`flex flex-col gap-3 border-t px-6 py-4 text-[10px] uppercase tracking-[0.18em] md:flex-row md:items-center md:justify-between ${isLight ? 'border-zinc-200 bg-zinc-50/70' : 'border-white/5 bg-white/2'}`}>
+        <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Engine Status: Operational</span>
+            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className={mutedClass}>Engine status operational</span>
           </div>
           <div className="flex items-center gap-2">
-            <Database size={12} className="text-white/40" />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Latency: 12ms</span>
+            <Database size={12} className={mutedClass} />
+            <span className={mutedClass}>Latency 12ms</span>
           </div>
         </div>
-        <div className="text-[10px] font-mono text-white/20">
-          QUANT-V3.2.0-INSTITUTIONAL
-        </div>
+        <div className={softClass}>QUANT-V3.3.0-INSTITUTIONAL</div>
       </div>
     </div>
   );

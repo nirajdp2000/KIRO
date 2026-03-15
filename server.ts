@@ -3,17 +3,27 @@ import axios from "axios";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import {
+  errorLoggingMiddleware,
+  installProcessErrorHandlers,
+  logAction,
+  logError,
+  requestLoggingMiddleware,
+  withErrorBoundary,
+} from "./serverLogger";
 
 import path from "path";
 import fs from "fs";
 
 dotenv.config();
+installProcessErrorHandlers();
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json({ limit: '1mb' }));
+  app.use(requestLoggingMiddleware());
 
   // Serve the Spring Boot template for a specific route
   app.get("/sb-terminal", (req, res) => {
@@ -509,6 +519,186 @@ async function startServer() {
     };
   };
 
+  const historicalCache = new Map<string, { expiresAt: number; payload: any }>();
+  const HISTORICAL_CACHE_TTL_MS = 60_000;
+
+  const intervalToMinutes = (selectedInterval: string) => {
+    switch (selectedInterval) {
+      case "1minute":
+        return 1;
+      case "5minute":
+        return 5;
+      case "30minute":
+        return 30;
+      case "day":
+        return 24 * 60;
+      default:
+        return 5;
+    }
+  };
+
+  const buildHistoricalCacheKey = (instrumentKey: string, selectedInterval: string, fromDate: string, toDate: string) =>
+    [instrumentKey, selectedInterval, fromDate, toDate].join("|");
+
+  const createSimulatedHistoricalPayload = (
+    instrumentKey: string,
+    selectedInterval: string,
+    fromDate: string,
+    toDate: string,
+    notice: string
+  ) => {
+    const seed = symbolSeed(`${instrumentKey}-${selectedInterval}`);
+    const random = seededGenerator(seed);
+    const stepMs = intervalToMinutes(selectedInterval) * 60 * 1000;
+    const startTime = new Date(`${fromDate}T09:15:00Z`).getTime();
+    const endTime = new Date(`${toDate}T15:30:00Z`).getTime();
+    const maxPoints = selectedInterval === "day" ? 400 : 1200;
+    const candles: Array<[string, number, number, number, number, number]> = [];
+    let cursor = startTime;
+    let lastClose = 80 + (seed % 2400) / 10;
+
+    while (cursor <= endTime && candles.length < maxPoints) {
+      const drift = (random() - 0.46) * (selectedInterval === "day" ? 3.4 : 1.2);
+      const open = Number(lastClose.toFixed(2));
+      const close = Number(Math.max(20, open + drift).toFixed(2));
+      const high = Number((Math.max(open, close) + random() * 1.8).toFixed(2));
+      const low = Number((Math.max(5, Math.min(open, close) - random() * 1.6)).toFixed(2));
+      const volume = Math.round(120000 + random() * 1800000);
+
+      candles.push([new Date(cursor).toISOString(), open, high, low, close, volume]);
+      lastClose = close;
+      cursor += stepMs;
+    }
+
+    return {
+      status: "success",
+      data: { candles },
+      meta: {
+        source: "simulated",
+        notice
+      }
+    };
+  };
+
+  const cacheHistoricalPayload = (cacheKey: string, payload: any) => {
+    historicalCache.set(cacheKey, {
+      expiresAt: Date.now() + HISTORICAL_CACHE_TTL_MS,
+      payload
+    });
+  };
+
+  const getCachedHistoricalPayload = (cacheKey: string) => {
+    const cached = historicalCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt < Date.now()) {
+      historicalCache.delete(cacheKey);
+      return null;
+    }
+
+    return cached.payload;
+  };
+
+  const averageClose = (candles: any[]) =>
+    candles.length ? candles.reduce((sum, candle) => sum + Number(candle.close ?? 0), 0) / candles.length : 0;
+
+  const buildFallbackAiAnalysis = ({
+    symbol,
+    data,
+    interval,
+    quantData,
+    advancedIntelligence,
+    reason
+  }: {
+    symbol: string;
+    data: any[];
+    interval: string;
+    quantData?: any;
+    advancedIntelligence?: any;
+    reason?: string;
+  }) => {
+    const recentCandles = data.slice(-20);
+    const latest = data[data.length - 1] ?? {};
+    const previous = data[data.length - 2] ?? latest;
+    const recentAverage = averageClose(recentCandles);
+    const longAverage = averageClose(data.slice(-50));
+    const priceChangePct = previous.close
+      ? ((Number(latest.close ?? 0) - Number(previous.close ?? 0)) / Number(previous.close)) * 100
+      : 0;
+    const trendBias = recentAverage && Number(latest.close ?? 0) >= recentAverage ? "Bullish" : "Bearish";
+    const momentumBias = longAverage && recentAverage >= longAverage ? "Improving" : "Mixed";
+    const support = Math.min(...recentCandles.map((candle) => Number(candle.low ?? candle.close ?? 0)));
+    const resistance = Math.max(...recentCandles.map((candle) => Number(candle.high ?? candle.close ?? 0)));
+    const averageVolume = recentCandles.length
+      ? recentCandles.reduce((sum, candle) => sum + Number(candle.volume ?? 0), 0) / recentCandles.length
+      : 0;
+    const volumeRatio = averageVolume ? Number(latest.volume ?? 0) / averageVolume : 1;
+    const sentimentStatus = quantData?.sentiment?.status ?? "Neutral";
+    const sentimentBoost = String(sentimentStatus).toUpperCase().includes("BULLISH") ? 12 : 0;
+    const aiBoost = Number(advancedIntelligence?.signalConsensus?.score ?? advancedIntelligence?.momentumPrediction?.probability ?? 50);
+    const directionalScore = clamp(50 + priceChangePct * 6 + (volumeRatio - 1) * 10 + sentimentBoost + (aiBoost - 50) * 0.35, 18, 96);
+
+    let recommendation = "HOLD";
+    if (directionalScore >= 66) {
+      recommendation = "BUY";
+    } else if (directionalScore <= 38) {
+      recommendation = "SELL";
+    }
+
+    const confidence = Math.round(directionalScore);
+    const summaryPoints = [
+      `${symbol} is trading on a ${trendBias.toLowerCase()} intraday structure with ${momentumBias.toLowerCase()} momentum.`,
+      `Volume is running at ${volumeRatio.toFixed(2)}x the recent average, which suggests ${volumeRatio > 1.2 ? "active participation" : "normal participation"}.`,
+      `Quant sentiment currently reads ${sentimentStatus}, and the local signal consensus score is ${Math.round(aiBoost)}.`
+    ];
+
+    const analysis = [
+      `### Actionable Signal`,
+      `**${recommendation}** because price is ${trendBias === "Bullish" ? "holding above" : "testing below"} its recent mean with ${volumeRatio > 1 ? "supportive" : "moderate"} participation.`,
+      ``,
+      `### Simple Summary for Beginners`,
+      `- ${summaryPoints[0]}`,
+      `- ${summaryPoints[1]}`,
+      `- ${summaryPoints[2]}`,
+      ``,
+      `### Executive Summary`,
+      `${symbol} on the ${interval} interval is showing a ${trendBias.toLowerCase()} bias with a ${priceChangePct.toFixed(2)}% latest move. The local quant engine is keeping the desk operational${reason ? ` while external AI is unavailable (${reason}).` : "."}`,
+      ``,
+      `### Trend Analysis`,
+      `Current bias: **${trendBias}**`,
+      `Momentum state: **${momentumBias}**`,
+      `Latest price move: **${priceChangePct.toFixed(2)}%**`,
+      ``,
+      `### Quant Intelligence Synthesis`,
+      `- Market sentiment: **${sentimentStatus}**`,
+      `- Consensus score: **${Math.round(aiBoost)}**`,
+      `- Volume ratio: **${volumeRatio.toFixed(2)}x**`,
+      ``,
+      `### Psychological Audit`,
+      `Retail and institutional flows appear ${recommendation === "BUY" ? "constructive" : recommendation === "SELL" ? "defensive" : "balanced"} based on price response, volume, and the current sentiment feed.`,
+      ``,
+      `### Key Levels`,
+      `| Level | Price |`,
+      `| --- | ---: |`,
+      `| S1 | ${support.toFixed(2)} |`,
+      `| R1 | ${resistance.toFixed(2)} |`,
+      ``,
+      `### Strategic Recommendation`,
+      `**Strategic Recommendation**: ${recommendation}`,
+      `Confidence Score: ${confidence}%`
+    ].join("\n");
+
+    return {
+      analysis,
+      sources: [],
+      confidence,
+      recommendation,
+      provider: "local-fallback"
+    };
+  };
+
   // API to search stocks
   app.get("/api/stocks/search", (req, res) => {
     const query = (req.query.q as string || "").toUpperCase();
@@ -522,30 +712,55 @@ async function startServer() {
   });
 
   // API to fetch historical data from Upstox
-  app.get("/api/stocks/historical", async (req, res) => {
+  app.get("/api/stocks/historical", withErrorBoundary(async (req, res) => {
     const { instrumentKey, interval, fromDate, toDate } = req.query;
-    
-    // Use env var or fallback to the token provided in the request (if still valid)
-    const token = process.env.UPSTOX_ACCESS_TOKEN || "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIzNUE3M1YiLCJqdGkiOiI2OWFiYTZjYmMxOTk0NjNjOTY2MjY4YzUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc3Mjg1NzAzNSwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzcyOTIwODAwfQ.3Rg_GiO29whict9sRaSe_XJI6_h6MVoY281rc-gZz8k";
+    const token = process.env.UPSTOX_ACCESS_TOKEN;
+    const cacheKey = buildHistoricalCacheKey(
+      String(instrumentKey || ""),
+      String(interval || "1minute"),
+      String(fromDate || ""),
+      String(toDate || "")
+    );
 
-    if (!token || token === "your_token_here") {
-      return res.status(500).json({ 
-        status: "error",
-        errors: [{ message: "Upstox Access Token is missing. Please set UPSTOX_ACCESS_TOKEN in the Secrets panel." }] 
+    const cachedPayload = getCachedHistoricalPayload(cacheKey);
+    if (cachedPayload) {
+      logAction("historical.cache.hit", {
+        instrumentKey,
+        interval,
+        fromDate,
+        toDate,
       });
+      return res.json(cachedPayload);
     }
 
     try {
       const encodedKey = encodeURIComponent(instrumentKey as string);
-      
       const to = toDate as string;
       const from = fromDate as string;
+      const selectedInterval = (interval as string) || "1minute";
 
-      if (!to || !from) {
-        return res.status(400).json({ error: "fromDate and toDate are required" });
+      if (!to || !from || !instrumentKey) {
+        return res.status(400).json({ error: "instrumentKey, fromDate, and toDate are required" });
       }
 
-      const url = `https://api.upstox.com/v2/historical-candle/${encodedKey}/${interval}/${to}/${from}`;
+      if (!token || token === "your_token_here") {
+        const fallbackPayload = createSimulatedHistoricalPayload(
+          String(instrumentKey),
+          selectedInterval,
+          from,
+          to,
+          "Using deterministic local market replay because UPSTOX_ACCESS_TOKEN is not configured."
+        );
+        cacheHistoricalPayload(cacheKey, fallbackPayload);
+        logAction("historical.fallback.used", {
+          instrumentKey,
+          interval: selectedInterval,
+          reason: "missing_upstox_token",
+        });
+        return res.json(fallbackPayload);
+      }
+
+      const url = `https://api.upstox.com/v2/historical-candle/${encodedKey}/${selectedInterval}/${to}/${from}`;
       
       const response = await axios.get(url, {
         headers: {
@@ -554,25 +769,48 @@ async function startServer() {
         },
       });
 
-      res.json(response.data);
+      const payload = {
+        ...response.data,
+        meta: {
+          source: "upstox"
+        }
+      };
+      cacheHistoricalPayload(cacheKey, payload);
+      logAction("historical.fetch.completed", {
+        instrumentKey,
+        interval: selectedInterval,
+        source: "upstox",
+      });
+      res.json(payload);
     } catch (error: any) {
       const errorData = error.response?.data;
-      console.error("Upstox API Error:", errorData || error.message);
-      
-      // Handle specific Upstox error for expired/invalid token
-      if (errorData?.errors?.some((e: any) => e.errorCode === 'UDAPI100011' || e.error_code === 'UDAPI100011')) {
-        return res.status(401).json({
-          status: "error",
-          errors: [{ 
-            message: "Upstox Access Token has expired or is invalid. Please generate a new token from Upstox Developer Console and update the UPSTOX_ACCESS_TOKEN secret.",
-            errorCode: "UDAPI100011"
-          }]
-        });
-      }
-
-      res.status(error.response?.status || 500).json(errorData || { error: "Failed to fetch data" });
+      logError("historical.fetch.failed", error, {
+        instrumentKey,
+        interval,
+        fromDate,
+        toDate,
+        providerPayload: errorData,
+      });
+      const fallbackPayload = createSimulatedHistoricalPayload(
+        String(instrumentKey || "MARKET"),
+        String(interval || "1minute"),
+        String(fromDate || new Date().toISOString().slice(0, 10)),
+        String(toDate || new Date().toISOString().slice(0, 10)),
+        errorData?.errors?.some((entry: any) => entry.errorCode === "UDAPI100011" || entry.error_code === "UDAPI100011")
+          ? "Live Upstox token is expired or invalid. Showing deterministic local replay while credentials are refreshed."
+          : "Live historical request failed. Showing deterministic local replay to keep analytics available."
+      );
+      cacheHistoricalPayload(cacheKey, fallbackPayload);
+      logAction("historical.fallback.used", {
+        instrumentKey,
+        interval,
+        reason: errorData?.errors?.some((entry: any) => entry.errorCode === "UDAPI100011" || entry.error_code === "UDAPI100011")
+          ? "invalid_or_expired_upstox_token"
+          : "upstox_request_failed",
+      });
+      res.json(fallbackPayload);
     }
-  });
+  }));
 
   app.post("/api/stocks/sma", (req, res) => {
     const { data, period } = req.body;
@@ -586,7 +824,8 @@ async function startServer() {
       } else {
         let sum = 0;
         for (let j = 0; j < period; j++) {
-          sum += data[i - j];
+          const point = data[i - j];
+          sum += typeof point === "number" ? point : Number(point?.close ?? 0);
         }
         sma.push(sum / period);
       }
@@ -595,29 +834,49 @@ async function startServer() {
   });
 
 // --- AI Analysis Endpoint ---
-app.post("/api/ai/analyze", async (req, res) => {
+app.post("/api/ai/analyze", withErrorBoundary(async (req, res) => {
   const { symbol, data, interval, quantData, advancedIntelligence } = req.body;
 
   if (!data || !Array.isArray(data) || data.length === 0) {
+    logAction("ai.analysis.rejected", {
+      symbol,
+      reason: "missing_price_data",
+    });
     return res.status(400).json({ error: "No data provided for analysis" });
   }
 
   try {
-    const model = "gemini-3-flash-preview";
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     
     // Prioritize API_KEY (injected by platform dialog) then GEMINI_API_KEY
     const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     
     if (!apiKey || apiKey === "YOUR_API_KEY") {
-      console.error("Gemini API key is missing or invalid in environment variables.");
-      throw new Error("Gemini API key is not configured. Please ensure you have selected a valid API key in the platform.");
+      logAction("ai.analysis.fallback", {
+        symbol,
+        provider: "local-fallback",
+        reason: "missing_gemini_api_key",
+      });
+      return res.json(buildFallbackAiAnalysis({
+        symbol,
+        data,
+        interval,
+        quantData,
+        advancedIntelligence,
+        reason: "Gemini API key not configured"
+      }));
     }
 
     // Masked logging for debugging (only first 4 and last 4 chars)
     const maskedKey = apiKey.length > 8 
       ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` 
       : "****";
-    console.log(`Using API key: ${maskedKey} (length: ${apiKey.length})`);
+    logAction("ai.analysis.provider.selected", {
+      symbol,
+      provider: "gemini",
+      apiKey: maskedKey,
+      interval,
+    });
     
     const ai = new GoogleGenAI({ apiKey });
     
@@ -693,7 +952,9 @@ app.post("/api/ai/analyze", async (req, res) => {
       }
     }
 
-    if (!result) throw new Error("Failed to get response from Gemini");
+    if (!result) {
+      throw new Error("Failed to get response from Gemini");
+    }
 
     const text = result.text || "";
       
@@ -714,20 +975,36 @@ app.post("/api/ai/analyze", async (req, res) => {
         analysis: text,
         sources: sources,
         confidence: confidence,
-        recommendation: recommendation
+        recommendation: recommendation,
+        provider: "gemini"
       });
     } catch (error: any) {
-      console.error("AI Analysis Error:", error);
-      res.status(500).json({ error: "Failed to generate AI analysis" });
+      logError("ai.analysis.failed", error, {
+        symbol,
+        interval,
+      });
+      logAction("ai.analysis.fallback", {
+        symbol,
+        provider: "local-fallback",
+        reason: error?.message || "gemini_request_failed",
+      });
+      res.json(buildFallbackAiAnalysis({
+        symbol,
+        data,
+        interval,
+        quantData,
+        advancedIntelligence,
+        reason: error?.message || "Gemini request failed"
+      }));
     }
-  });
+  }));
 
   app.get("/api/premium/momentum", (req, res) => {
     const alerts = Array.from({ length: 5 }, () => ({
       symbol: POPULAR_STOCKS[Math.floor(Math.random() * POPULAR_STOCKS.length)].symbol,
       change5m: (1.5 + Math.random() * 2).toFixed(2),
       volumeRatio: (2.0 + Math.random() * 5).toFixed(2),
-      type: "⚡ Momentum Alert"
+      type: "Momentum Alert"
     }));
     res.json(alerts);
   });
@@ -977,11 +1254,40 @@ app.post("/api/ai/analyze", async (req, res) => {
         { sector: "Energy", strength: 45, momentum: "Neutral" },
         { sector: "Pharma", strength: 32, momentum: "Bearish" }
       ],
+      gradientBoosting: {
+        probability: 81,
+        horizon: "next 5m",
+        topFeatures: ["price_change_5min", "volume_ratio", "VWAP_distance"]
+      },
+      lstmForecast: {
+        nextPrice: "3128.40",
+        confidenceBand: "+/- 18.25",
+        candles: 50
+      },
+      regimeModel: {
+        model: "Random Forest",
+        regime: "Trending",
+        confidence: 79
+      },
+      hiddenStateModel: {
+        model: "HMM",
+        state: "Accumulation",
+        transitionRisk: 24
+      },
+      reinforcementAgent: {
+        action: "BUY",
+        rewardScore: 0.74,
+        riskPenalty: 0.18
+      },
+      signalConsensus: {
+        score: 84,
+        verdict: "Bullish Consensus"
+      },
       patternRecognition: {
         pattern: "Ascending Triangle",
         confidence: 89,
         status: "Breakout Imminent",
-        target: "₹3,250"
+        target: "Rs 3,250"
       },
       marketSentiment: {
         score: 76,
@@ -1168,11 +1474,22 @@ app.post("/api/ai/analyze", async (req, res) => {
   app.get("/api/institutional/correlation-data", (req, res) => {
     const { symbol } = req.query;
     const assets = ["NIFTY 50", "BANK NIFTY", "USD/INR", "CRUDE OIL", "GOLD"];
+    const random = seededGenerator(symbolSeed(String(symbol || "MARKET")));
     const data = assets.map(asset => ({
       name: asset,
-      value: 0.5 + Math.random() * 0.45
+      value: Number((0.5 + random() * 0.45).toFixed(2))
     }));
     res.json(data);
+  });
+
+  app.get("/api/institutional/sector-rotation", (req, res) => {
+    const sectors = [
+      { sector: "IT", strength: 86, leader: "TCS", flow: "High beta accumulation", bias: "LEADING" },
+      { sector: "Banking", strength: 78, leader: "HDFCBANK", flow: "Steady broad-based bids", bias: "IMPROVING" },
+      { sector: "Industrials", strength: 69, leader: "LT", flow: "Infrastructure rotation", bias: "IMPROVING" },
+      { sector: "Energy", strength: 48, leader: "RELIANCE", flow: "Mixed commodity response", bias: "LAGGING" }
+    ];
+    res.json(sectors);
   });
 
   app.get("/api/institutional/microstructure", (req, res) => {
@@ -1220,11 +1537,21 @@ app.post("/api/ai/analyze", async (req, res) => {
 
   app.post("/api/ultra-quant/scan", (req, res) => {
     const dashboard = buildUltraQuantDashboard(req.body || {});
+    logAction("ultra_quant.scan.completed", {
+      filters: req.body || {},
+      resultCount: dashboard.results.length,
+    });
     res.json(dashboard.results);
   });
 
   app.post("/api/ultra-quant/dashboard", (req, res) => {
     const dashboard = buildUltraQuantDashboard(req.body || {});
+    logAction("ultra_quant.dashboard.completed", {
+      filters: req.body || {},
+      resultCount: dashboard.results.length,
+      alertCount: dashboard.alerts.length,
+      sectorCount: dashboard.sectors.length,
+    });
     res.json(dashboard);
   });
 
@@ -1251,9 +1578,18 @@ app.post("/api/ai/analyze", async (req, res) => {
     });
   }
 
+  app.use(errorLoggingMiddleware);
+
   app.listen(PORT, "0.0.0.0", () => {
+    logAction("server.started", {
+      port: PORT,
+      nodeEnv: process.env.NODE_ENV || "development",
+    });
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  logError("server.startup.failed", error);
+  process.exitCode = 1;
+});

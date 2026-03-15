@@ -1,4 +1,4 @@
-import { Type } from "@google/genai";
+import { fetchJson } from '../lib/api';
 
 export interface OrderBookLevel {
   price: number;
@@ -25,18 +25,25 @@ export interface InstitutionalMetrics {
   marketRegime: 'TRENDING' | 'SIDEWAYS' | 'VOLATILE';
 }
 
+export interface SectorRotationNode {
+  sector: string;
+  strength: number;
+  leader: string;
+  flow: string;
+  bias: 'LEADING' | 'IMPROVING' | 'LAGGING';
+}
+
 export class InstitutionalService {
   /**
    * ORDER FLOW IMBALANCE ENGINE
    * order_imbalance = bid_volume / ask_volume
    */
   static async calculateOrderImbalance(orderBook: OrderBook): Promise<{ imbalance: number; signal: string; score: number }> {
-    const res = await fetch('/api/institutional/imbalance', {
+    return fetchJson('/api/institutional/imbalance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(orderBook)
     });
-    return res.json();
   }
 
   /**
@@ -49,24 +56,22 @@ export class InstitutionalService {
     vah: number; 
     val: number;
   }> {
-    const res = await fetch('/api/institutional/volume-profile', {
+    return fetchJson('/api/institutional/volume-profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ candles, binSize })
     });
-    return res.json();
   }
 
   /**
    * CROSS-ASSET CORRELATION ENGINE
    */
   static async calculateCorrelation(seriesA: number[], seriesB: number[]): Promise<number> {
-    const res = await fetch('/api/institutional/correlation', {
+    const data = await fetchJson<{ correlation: number }>('/api/institutional/correlation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seriesA, seriesB })
     });
-    const data = await res.json();
     return data.correlation;
   }
 
@@ -75,12 +80,15 @@ export class InstitutionalService {
    * Detects market regime
    */
   static async detectMarketRegime(candles: any[]): Promise<'TRENDING' | 'SIDEWAYS' | 'VOLATILE'> {
-    const res = await fetch('/api/institutional/market-regime', {
+    const data = await fetchJson<{ regime: 'TRENDING' | 'SIDEWAYS' | 'VOLATILE' }>('/api/institutional/market-regime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(candles)
     });
-    const data = await res.json();
     return data.regime as 'TRENDING' | 'SIDEWAYS' | 'VOLATILE';
+  }
+
+  static async getSectorRotation(): Promise<SectorRotationNode[]> {
+    return fetchJson('/api/institutional/sector-rotation');
   }
 }

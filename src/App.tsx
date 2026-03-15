@@ -33,7 +33,9 @@ import {
   ShieldCheck,
   Copy,
   Download,
-  Shield
+  Shield,
+  MoonStar,
+  SunMedium
 } from 'lucide-react';
 import { format, subDays, parseISO } from 'date-fns';
 import Markdown from 'react-markdown';
@@ -41,11 +43,15 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { InstitutionalAnalytics } from './components/InstitutionalAnalytics';
 import UltraQuantTab from './components/UltraQuantTab';
+import { fetchJson } from './lib/api';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const isBullishStatus = (status?: string | null) => (status ?? '').toUpperCase().includes('BULLISH');
+const formatCurrency = (value: string | number) => `Rs ${value}`;
 
 declare global {
   interface Window {
@@ -75,6 +81,27 @@ interface CandleData {
   sma50?: number;
 }
 
+interface HistoricalResponse {
+  status?: string;
+  data?: {
+    candles?: Array<[string, number, number, number, number, number]>;
+  };
+  errors?: Array<{ message?: string }>;
+  error?: string;
+  meta?: {
+    source?: string;
+    notice?: string;
+  };
+}
+
+interface AiAnalysisResponse {
+  analysis: string;
+  sources?: Array<{ title?: string; url?: string }>;
+  confidence?: number;
+  recommendation?: string;
+  provider?: string;
+}
+
 const POPULAR_STOCKS = [
   { name: "RELIANCE INDUSTRIES LTD", symbol: "RELIANCE", key: "NSE_EQ|INE002A01018" },
   { name: "TATA CONSULTANCY SERVICES LTD", symbol: "TCS", key: "NSE_EQ|INE467B01029" },
@@ -101,6 +128,12 @@ export default function App() {
   const [showSMA20, setShowSMA20] = useState(false);
   const [showSMA50, setShowSMA50] = useState(false);
   const [activeTab, setActiveTab] = useState<'analytics' | 'quant' | 'institutional' | 'ultraQuant'>('analytics');
+  const [deskTheme, setDeskTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') {
+      return 'dark';
+    }
+    return window.localStorage.getItem('stockpulse-desk-theme') === 'light' ? 'light' : 'dark';
+  });
   
   // AI States
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -116,9 +149,18 @@ export default function App() {
   const [advancedIntelligence, setAdvancedIntelligence] = useState<any>(null);
   const [quantLoading, setQuantLoading] = useState(false);
   const [hasApiKey, setHasApiKey] = useState<boolean>(true);
+  const [historicalNotice, setHistoricalNotice] = useState<string | null>(null);
+  const [historicalSource, setHistoricalSource] = useState<'upstox' | 'simulated' | null>(null);
   
   const searchRef = useRef<HTMLDivElement>(null);
   const isUltraQuantTab = activeTab === 'ultraQuant';
+  const isDeskLight = deskTheme === 'light';
+  const quantShellClass = isDeskLight
+    ? 'bg-white/90 border-zinc-200 text-zinc-900 shadow-[0_30px_90px_rgba(15,23,42,0.12)]'
+    : 'bg-zinc-900/50 border-white/5 text-white shadow-xl';
+  const quantSubPanelClass = isDeskLight
+    ? 'bg-zinc-50 border-zinc-200'
+    : 'bg-black/20 border-white/5';
 
   // Check for AI Studio API Key
   useEffect(() => {
@@ -131,24 +173,36 @@ export default function App() {
     checkApiKey();
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem('stockpulse-desk-theme', deskTheme);
+  }, [deskTheme]);
+
   // Handle autocomplete
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchSuggestions = async () => {
       if (query.length < 2) {
         setSuggestions([]);
         return;
       }
       try {
-        const res = await fetch(`/api/stocks/search?q=${query}`);
-        const json = await res.json();
+        const json = await fetchJson<Stock[]>(`/api/stocks/search?q=${query}`, {
+          signal: controller.signal
+        });
         setSuggestions(json);
       } catch (err) {
-        console.error('Search error:', err);
+        if (!controller.signal.aborted) {
+          console.error('Search error:', err);
+        }
       }
     };
 
     const timer = setTimeout(fetchSuggestions, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, [query]);
 
   // Initial fetch and periodic refresh for Quant Lab
@@ -183,12 +237,11 @@ export default function App() {
   // Calculate Simple Moving Average via Java Backend
   const calculateSMA = async (data: any[], period: number) => {
     try {
-      const res = await fetch('/api/stocks/sma', {
+      const json = await fetchJson<{ sma?: number[] }>('/api/stocks/sma', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data, period })
       });
-      const json = await res.json();
       return json.sma || [];
     } catch (e) {
       console.error("Failed to calculate SMA", e);
@@ -196,20 +249,27 @@ export default function App() {
     }
   };
 
-  const fetchData = async () => {
-    if (!selectedStock) {
+  const fetchData = async (stockOverride?: Stock | null) => {
+    const stockToLoad = stockOverride ?? selectedStock;
+
+    if (!stockToLoad) {
       setError('Please select a stock first');
       return;
     }
 
     setLoading(true);
     setError(null);
+    setHistoricalNotice(null);
+    setHistoricalSource(null);
     setAiAnalysis(null); // Reset AI analysis on new data fetch
     try {
-      const res = await fetch(
-        `/api/stocks/historical?instrumentKey=${encodeURIComponent(selectedStock.key)}&interval=${interval}&fromDate=${fromDate}&toDate=${toDate}`
+      if (new Date(fromDate).getTime() > new Date(toDate).getTime()) {
+        throw new Error('Start date must be earlier than end date.');
+      }
+
+      const json = await fetchJson<HistoricalResponse>(
+        `/api/stocks/historical?instrumentKey=${encodeURIComponent(stockToLoad.key)}&interval=${interval}&fromDate=${fromDate}&toDate=${toDate}`
       );
-      const json = await res.json();
 
       if (json.status === 'error') {
         throw new Error(json.errors?.[0]?.message || 'Failed to fetch data');
@@ -221,6 +281,8 @@ export default function App() {
 
       // Upstox returns [time, open, high, low, close, volume]
       const rawCandles = [...json.data.candles].reverse();
+      setHistoricalNotice(json.meta?.notice || null);
+      setHistoricalSource((json.meta?.source as 'upstox' | 'simulated' | undefined) ?? null);
       
       const smaData = rawCandles.map(c => ({ close: c[4] }));
       const [sma20Values, sma50Values] = await Promise.all([
@@ -244,7 +306,7 @@ export default function App() {
       setData(formattedData);
       
       // Fetch AI Insights (Mocked but enhanced)
-      fetchAiInsights(selectedStock.symbol);
+      fetchAiInsights(stockToLoad.symbol);
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred');
       setData([]);
@@ -256,12 +318,12 @@ export default function App() {
   const fetchAiInsights = async (symbol: string) => {
     try {
       const [momentum, breakouts, sentiment, psychology, intelligence, news] = await Promise.all([
-        fetch('/api/premium/momentum').then(r => r.json()),
-        fetch('/api/premium/breakouts').then(r => r.json()),
-        fetch('/api/premium/sentiment').then(r => r.json()),
-        fetch(`/api/premium/psychology?symbol=${symbol}`).then(r => r.json()),
-        fetch('/api/premium/market-intelligence').then(r => r.json()),
-        fetch('/api/premium/ai-news-feed').then(r => r.json())
+        fetchJson<any[]>('/api/premium/momentum'),
+        fetchJson<any[]>('/api/premium/breakouts'),
+        fetchJson<any>('/api/premium/sentiment'),
+        fetchJson<any>(`/api/premium/psychology?symbol=${symbol}`),
+        fetchJson<any>('/api/premium/market-intelligence'),
+        fetchJson<any[]>('/api/premium/ai-news-feed')
       ]);
       
       setAiInsights({ momentum, breakouts, sentiment, psychology });
@@ -279,15 +341,15 @@ export default function App() {
     setQuantLoading(true);
     try {
       const [momentum, breakouts, surges, indicators, sectors, flow, trends, sentiment, advanced] = await Promise.all([
-        fetch('/api/quant/momentum').then(r => r.json()),
-        fetch('/api/quant/breakouts').then(r => r.json()),
-        fetch('/api/quant/volume-surge').then(r => r.json()),
-        fetch('/api/quant/indicators').then(r => r.json()),
-        fetch('/api/quant/sectors').then(r => r.json()),
-        fetch('/api/quant/money-flow').then(r => r.json()),
-        fetch('/api/quant/trends').then(r => r.json()),
-        fetch('/api/quant/sentiment').then(r => r.json()),
-        fetch('/api/quant/advanced-intelligence').then(r => r.json())
+        fetchJson<any[]>('/api/quant/momentum'),
+        fetchJson<any[]>('/api/quant/breakouts'),
+        fetchJson<any[]>('/api/quant/volume-surge'),
+        fetchJson<any[]>('/api/quant/indicators'),
+        fetchJson<any[]>('/api/quant/sectors'),
+        fetchJson<any[]>('/api/quant/money-flow'),
+        fetchJson<any[]>('/api/quant/trends'),
+        fetchJson<any>('/api/quant/sentiment'),
+        fetchJson<any>('/api/quant/advanced-intelligence')
       ]);
       
       setQuantData({ momentum, breakouts, surges, indicators, sectors, flow, trends, sentiment });
@@ -300,7 +362,14 @@ export default function App() {
   };
 
   const runAiAnalysis = async () => {
-    if (!selectedStock || data.length === 0) return;
+    if (!selectedStock || data.length === 0) {
+      setAiRecommendation(null);
+      setAiConfidence(0);
+      setAiSources([]);
+      setAiAnalysis('### AI Deep Scan Unavailable\n\nLoad a stock and fetch historical candles first, then run the scan again.');
+      setAiLastUpdated(new Date().toLocaleTimeString());
+      return;
+    }
     
     // If key selection is required but not done
     if (window.aistudio?.hasSelectedApiKey) {
@@ -314,7 +383,7 @@ export default function App() {
 
     setAiLoading(true);
     try {
-      const res = await fetch('/api/ai/analyze', {
+      const json = await fetchJson<AiAnalysisResponse>('/api/ai/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -326,28 +395,6 @@ export default function App() {
         })
       });
 
-      if (!res.ok) {
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const errorJson = await res.json();
-          const errorMsg = errorJson.error || `Server error: ${res.status}`;
-          
-          // If the error is about API key, prompt to select one
-          if (errorMsg.toLowerCase().includes("api key") || errorMsg.toLowerCase().includes("not found")) {
-            if (window.aistudio?.openSelectKey) {
-              setHasApiKey(false);
-              setAiAnalysis(`### API Key Required\n\nIt seems your API key is missing or invalid. Please select a valid API key from the platform to proceed.\n\n[Select API Key](javascript:window.aistudio.openSelectKey())`);
-              return;
-            }
-          }
-          throw new Error(errorMsg);
-        } else {
-          const errorText = await res.text();
-          throw new Error(`Server error (${res.status}): ${errorText.slice(0, 100)}`);
-        }
-      }
-
-      const json = await res.json();
       setAiAnalysis(json.analysis);
       setAiSources(json.sources || []);
       setAiConfidence(json.confidence || 0);
@@ -478,14 +525,17 @@ export default function App() {
                 <span className="bg-emerald-400 text-indigo-900 px-1.5 py-0.5 rounded text-[9px] font-black">BUY</span>
               </p>
               <p className="hidden md:block text-[10px] text-indigo-200 font-medium italic">
-                "{marketIntelligence.topTradeIdeas[0].setup}" — Target: ₹{marketIntelligence.topTradeIdeas[0].target}
+                "{marketIntelligence.topTradeIdeas[0].setup}" - Target: {formatCurrency(marketIntelligence.topTradeIdeas[0].target)}
               </p>
             </div>
             <button 
               onClick={() => {
-                setSelectedStock(POPULAR_STOCKS.find(s => s.symbol === marketIntelligence.topTradeIdeas[0].symbol) || null);
+                const stock = POPULAR_STOCKS.find(s => s.symbol === marketIntelligence.topTradeIdeas[0].symbol) || null;
+                setSelectedStock(stock);
                 setQuery(marketIntelligence.topTradeIdeas[0].symbol);
-                fetchData();
+                if (stock) {
+                  fetchData(stock);
+                }
               }}
               className="text-[10px] font-black text-white uppercase tracking-tighter hover:underline flex items-center gap-1"
             >
@@ -548,6 +598,14 @@ export default function App() {
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live Market
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setDeskTheme((current) => current === 'dark' ? 'light' : 'dark')}
+              className="hidden sm:flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-300 transition hover:border-cyan-400/40 hover:text-white"
+            >
+              {deskTheme === 'dark' ? <SunMedium className="w-4 h-4 text-amber-300" /> : <MoonStar className="w-4 h-4 text-cyan-300" />}
+              Desk
+            </button>
             <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-zinc-800 to-zinc-700 border border-white/10 flex items-center justify-center">
               <Maximize2 className="w-4 h-4 text-zinc-400" />
             </div>
@@ -705,7 +763,7 @@ export default function App() {
                 </div>
 
                 <button
-                  onClick={fetchData}
+                  onClick={() => fetchData()}
                   disabled={loading || !selectedStock}
                   className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:from-zinc-800 disabled:to-zinc-800 text-white font-bold py-4 rounded-2xl shadow-2xl shadow-indigo-500/20 transition-all flex items-center justify-center gap-3 mt-4 group"
                 >
@@ -723,10 +781,10 @@ export default function App() {
               <div className="bg-zinc-900/50 backdrop-blur-md rounded-2xl border border-white/5 p-4 flex items-center justify-between shadow-xl">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
-                    <div className={cn("w-2 h-2 rounded-full", quantData.sentiment.status === 'BULLISH' ? "bg-emerald-500" : "bg-rose-500")} />
+                    <div className={cn("w-2 h-2 rounded-full", isBullishStatus(quantData.sentiment.status) ? "bg-emerald-500" : "bg-rose-500")} />
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Market Mood</span>
                   </div>
-                  <span className={cn("text-xs font-bold", quantData.sentiment.status === 'BULLISH' ? "text-emerald-400" : "text-rose-400")}>
+                  <span className={cn("text-xs font-bold", isBullishStatus(quantData.sentiment.status) ? "text-emerald-400" : "text-rose-400")}>
                     {quantData.sentiment.status}
                   </span>
                 </div>
@@ -796,9 +854,11 @@ export default function App() {
                   <div className="flex flex-col gap-3 w-full md:w-auto">
                     <button 
                       onClick={runAiAnalysis}
-                      className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
+                      disabled={aiLoading}
+                      className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
                     >
-                      Full Technical Audit
+                      {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                      {aiLoading ? 'Running Audit...' : 'Full Technical Audit'}
                     </button>
                     <p className="text-[9px] text-zinc-600 text-center uppercase font-bold tracking-widest">Updated {aiLastUpdated || 'Just Now'}</p>
                   </div>
@@ -844,12 +904,30 @@ export default function App() {
                     <div className="text-right hidden sm:block">
                       <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter">Current Price</p>
                       <p className="text-xl font-mono font-bold text-emerald-400 tracking-tighter">
-                        ₹{data[data.length-1].close.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {formatCurrency(data[data.length-1].close.toLocaleString(undefined, { minimumFractionDigits: 2 }))}
                       </p>
                     </div>
                   </div>
                 )}
               </div>
+
+              {(historicalNotice || historicalSource) && (
+                <div className="mx-8 mb-2 flex flex-wrap items-center gap-2">
+                  {historicalSource && (
+                    <span className={cn(
+                      "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em]",
+                      historicalSource === 'simulated'
+                        ? "bg-amber-500/10 text-amber-300"
+                        : "bg-emerald-500/10 text-emerald-300"
+                    )}>
+                      {historicalSource === 'simulated' ? 'Simulated Feed' : 'Upstox Feed'}
+                    </span>
+                  )}
+                  {historicalNotice && (
+                    <span className="text-[10px] text-zinc-500">{historicalNotice}</span>
+                  )}
+                </div>
+              )}
 
               {/* Chart Body */}
               <div className="flex-1 p-8 relative min-h-0">
@@ -873,7 +951,7 @@ export default function App() {
                       <p className="text-sm text-zinc-500 leading-relaxed">{error}</p>
                     </div>
                     <button 
-                      onClick={fetchData}
+                      onClick={() => fetchData()}
                       className="bg-white/5 hover:bg-white/10 text-white px-8 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border border-white/10"
                     >
                       Re-establish Connection
@@ -1032,7 +1110,7 @@ export default function App() {
                           Smart AI Analysis
                         </h3>
                         <p className="text-xs text-zinc-500 font-medium uppercase tracking-widest mt-1">
-                          Deep technical & fundamental synthesis by Gemini
+                          Deep technical synthesis with Gemini plus local quant fallback
                         </p>
                       </div>
                       
@@ -1049,7 +1127,7 @@ export default function App() {
                         ) : (
                           <>
                             <Brain className="w-4 h-4" />
-                            Generate Analysis
+                            Full Technical Audit
                           </>
                         )}
                       </button>
@@ -1243,7 +1321,7 @@ export default function App() {
                               onClick={() => setActiveTab('quant')}
                               className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest"
                             >
-                              View Full Lab →
+                              View Full Lab {'->'}
                             </button>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1353,11 +1431,11 @@ export default function App() {
                                 <div className="grid grid-cols-3 gap-4 mb-4">
                                   <div className="bg-black/20 p-2 rounded-xl border border-white/5">
                                     <p className="text-[8px] text-zinc-500 uppercase font-bold mb-1">Target</p>
-                                    <p className="text-sm font-mono font-bold text-emerald-400">₹{idea.target}</p>
+                                    <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(idea.target)}</p>
                                   </div>
                                   <div className="bg-black/20 p-2 rounded-xl border border-white/5">
                                     <p className="text-[8px] text-zinc-500 uppercase font-bold mb-1">Stop Loss</p>
-                                    <p className="text-sm font-mono font-bold text-rose-400">₹{idea.stop}</p>
+                                    <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(idea.stop)}</p>
                                   </div>
                                   <div className="bg-black/20 p-2 rounded-xl border border-white/5">
                                     <p className="text-[8px] text-zinc-500 uppercase font-bold mb-1">R:R Ratio</p>
@@ -1367,7 +1445,7 @@ export default function App() {
 
                                 <button 
                                   onClick={() => {
-                                    const signal = `Trade Idea: ${idea.symbol}\nSetup: ${idea.setup}\nTarget: ₹${idea.target}\nStop Loss: ₹${idea.stop}\nTimeframe: ${idea.timeframe}`;
+                                    const signal = `Trade Idea: ${idea.symbol}\nSetup: ${idea.setup}\nTarget: ${formatCurrency(idea.target)}\nStop Loss: ${formatCurrency(idea.stop)}\nTimeframe: ${idea.timeframe}`;
                                     navigator.clipboard.writeText(signal);
                                     alert(`Signal for ${idea.symbol} copied!`);
                                   }}
@@ -1390,44 +1468,59 @@ export default function App() {
               symbol={selectedStock?.symbol || 'MARKET'} 
               candles={data} 
               onAnalyze={runAiAnalysis}
+              theme={deskTheme}
+              aiAnalysis={aiAnalysis}
+              aiLoading={aiLoading}
+              aiConfidence={aiConfidence}
+              aiRecommendation={aiRecommendation}
+              aiLastUpdated={aiLastUpdated}
+              aiSources={aiSources}
             />
           ) : (
             <div className="space-y-8">
                 {/* Quant Lab Header */}
-                <div className="bg-zinc-900/50 backdrop-blur-md rounded-[2.5rem] border border-white/5 p-10 shadow-2xl relative overflow-hidden">
+                <div className={cn("backdrop-blur-md rounded-[2.5rem] border p-10 shadow-2xl relative overflow-hidden", quantShellClass)}>
                   <div className="absolute top-0 right-0 p-10 opacity-5">
                     <Zap className="w-64 h-64 text-indigo-500" />
                   </div>
                   <div className="relative z-10">
-                    <h2 className="text-3xl font-bold text-white mb-2 flex items-center gap-4">
-                      <Brain className="w-10 h-10 text-indigo-400" />
-                      Quant Strategy Lab
-                    </h2>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                      <h2 className={cn("text-3xl font-bold flex items-center gap-4", isDeskLight ? "text-zinc-900" : "text-white")}>
+                        <Brain className="w-10 h-10 text-indigo-400" />
+                        Quant Strategy Lab
+                      </h2>
+                      <div className={cn(
+                        "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
+                        isDeskLight ? "bg-cyan-100 text-cyan-700" : "bg-cyan-500/10 text-cyan-300"
+                      )}>
+                        {deskTheme === 'light' ? 'Light Desk' : 'Dark Desk'}
+                      </div>
+                    </div>
                     <p className="text-sm text-zinc-500 font-medium uppercase tracking-[0.3em]">Advanced Algorithmic Execution Environment</p>
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-10">
                       {quantData && (
                         <>
-                          <div className="bg-black/40 rounded-2xl p-6 border border-white/5">
+                          <div className={cn("rounded-2xl p-6 border", quantSubPanelClass)}>
                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Market Sentiment</p>
-                            <p className="text-xl font-bold text-emerald-400">{quantData.sentiment.status}</p>
+                            <p className={cn("text-xl font-bold", isBullishStatus(quantData.sentiment.status) ? "text-emerald-400" : "text-rose-400")}>{quantData.sentiment.status}</p>
                             <p className="text-[10px] text-zinc-600 mt-1">A/D Ratio: {quantData.sentiment.adRatio}</p>
                           </div>
-                          <div className="bg-black/40 rounded-2xl p-6 border border-white/5">
+                          <div className={cn("rounded-2xl p-6 border", quantSubPanelClass)}>
                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Confidence Score</p>
                             <p className="text-xl font-bold text-indigo-400">{quantData.sentiment.confidence}%</p>
                             <div className="w-full h-1 bg-zinc-800 rounded-full mt-2">
                               <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${quantData.sentiment.confidence}%` }} />
                             </div>
                           </div>
-                          <div className="bg-black/40 rounded-2xl p-6 border border-white/5">
+                          <div className={cn("rounded-2xl p-6 border", quantSubPanelClass)}>
                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Volatility Index</p>
-                            <p className="text-xl font-bold text-zinc-300">{quantData.sentiment.volatility}</p>
+                            <p className={cn("text-xl font-bold", isDeskLight ? "text-zinc-800" : "text-zinc-300")}>{quantData.sentiment.volatility}</p>
                             <p className="text-[10px] text-zinc-600 mt-1">System Risk: Low</p>
                           </div>
-                          <div className="bg-black/40 rounded-2xl p-6 border border-white/5">
+                          <div className={cn("rounded-2xl p-6 border", quantSubPanelClass)}>
                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Active Scanners</p>
-                            <p className="text-xl font-bold text-white">09</p>
+                            <p className={cn("text-xl font-bold", isDeskLight ? "text-zinc-900" : "text-white")}>09</p>
                             <div className="text-[10px] text-emerald-500 mt-1 flex items-center gap-1 font-bold">
                               <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" /> Real-time
                             </div>
@@ -1441,7 +1534,7 @@ export default function App() {
                 {/* Quant Modules Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {/* Module 1: Momentum Scanner */}
-                  <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-widest">
                         <TrendingUp className="w-4 h-4 text-emerald-400" /> Momentum Scanner
@@ -1450,7 +1543,7 @@ export default function App() {
                     </div>
                     <div className="space-y-4">
                       {quantData?.momentum.map((m: any, i: number) => (
-                        <div key={i} className="p-4 bg-black/20 rounded-2xl border border-white/5 hover:border-emerald-500/30 transition-colors">
+                        <div key={i} className={cn("p-4 rounded-2xl border hover:border-emerald-500/30 transition-colors", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-bold text-white">{m.symbol}</span>
                             <span className="text-[10px] font-bold text-emerald-400">+{m.priceChange}%</span>
@@ -1465,7 +1558,7 @@ export default function App() {
                   </div>
 
                   {/* Module 2: Breakout Detector */}
-                  <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-widest">
                         <Target className="w-4 h-4 text-indigo-400" /> Breakout Detector
@@ -1474,7 +1567,7 @@ export default function App() {
                     </div>
                     <div className="space-y-4">
                       {quantData?.breakouts.map((b: any, i: number) => (
-                        <div key={i} className="p-4 bg-black/20 rounded-2xl border border-white/5 hover:border-indigo-500/30 transition-colors">
+                        <div key={i} className={cn("p-4 rounded-2xl border hover:border-indigo-500/30 transition-colors", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-bold text-white">{b.symbol}</span>
                             <span className="text-[10px] font-bold text-indigo-400">SCORE: {b.strength}</span>
@@ -1482,11 +1575,11 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-4 mt-3">
                             <div>
                               <p className="text-[9px] text-zinc-600 uppercase font-bold">Level</p>
-                              <p className="text-xs font-mono text-white">₹{b.level}</p>
+                              <p className="text-xs font-mono text-white">{formatCurrency(b.level)}</p>
                             </div>
                             <div>
                               <p className="text-[9px] text-zinc-600 uppercase font-bold">VWAP</p>
-                              <p className="text-xs font-mono text-zinc-400">₹{b.vwap}</p>
+                              <p className="text-xs font-mono text-zinc-400">{formatCurrency(b.vwap)}</p>
                             </div>
                           </div>
                         </div>
@@ -1495,7 +1588,7 @@ export default function App() {
                   </div>
 
                   {/* Module 3: Volume Surge Engine */}
-                  <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-widest">
                         <Zap className="w-4 h-4 text-orange-400" /> Volume Surge Engine
@@ -1504,7 +1597,7 @@ export default function App() {
                     </div>
                     <div className="space-y-4">
                       {quantData?.surges.map((s: any, i: number) => (
-                        <div key={i} className="p-4 bg-black/20 rounded-2xl border border-white/5 border-l-4 border-l-orange-500">
+                        <div key={i} className={cn("p-4 rounded-2xl border border-l-4 border-l-orange-500", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-sm font-bold text-white">{s.symbol}</span>
                             <span className="text-[10px] font-bold text-orange-400">{s.ratio}x AVG</span>
@@ -1517,7 +1610,7 @@ export default function App() {
                   </div>
 
                   {/* Module 4: Multi Indicator Engine */}
-                  <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-widest">
                         <Sparkles className="w-4 h-4 text-emerald-400" /> Indicator Engine
@@ -1526,7 +1619,7 @@ export default function App() {
                     </div>
                     <div className="space-y-3">
                       {quantData?.indicators.map((ind: any, i: number) => (
-                        <div key={i} className="flex items-center justify-between p-4 bg-black/20 rounded-2xl border border-white/5">
+                        <div key={i} className={cn("flex items-center justify-between p-4 rounded-2xl border", quantSubPanelClass)}>
                           <div>
                             <p className="text-sm font-bold text-white">{ind.symbol}</p>
                             <p className="text-[10px] text-zinc-500">RSI: {ind.rsi}</p>
@@ -1556,7 +1649,7 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       {/* AI Momentum Prediction */}
-                      <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-xl relative overflow-hidden group">
+                      <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl relative overflow-hidden group", quantShellClass)}>
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <TrendingUp className="w-12 h-12 text-emerald-400" />
                         </div>
@@ -1576,7 +1669,7 @@ export default function App() {
                           </div>
                           <div className="grid grid-cols-2 gap-2 pt-2">
                             {Object.entries(advancedIntelligence.momentumPrediction.features).map(([key, val]: [string, any]) => (
-                              <div key={key} className="bg-black/20 rounded-lg p-2 border border-white/5">
+                              <div key={key} className={cn("rounded-lg p-2 border", quantSubPanelClass)}>
                                 <p className="text-[8px] text-zinc-600 uppercase font-bold">{key}</p>
                                 <p className="text-[10px] font-mono text-zinc-300">{val}</p>
                               </div>
@@ -1586,7 +1679,7 @@ export default function App() {
                       </div>
 
                       {/* Institutional Order Flow */}
-                      <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-xl relative overflow-hidden group">
+                      <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl relative overflow-hidden group", quantShellClass)}>
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <Zap className="w-12 h-12 text-orange-400" />
                         </div>
@@ -1621,7 +1714,7 @@ export default function App() {
                       </div>
 
                       {/* Smart Money Accumulation */}
-                      <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-xl relative overflow-hidden group">
+                      <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl relative overflow-hidden group", quantShellClass)}>
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <ShieldCheck className="w-12 h-12 text-indigo-400" />
                         </div>
@@ -1640,11 +1733,11 @@ export default function App() {
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-4 pt-2">
-                            <div className="bg-black/20 rounded-xl p-3 border border-white/5">
+                            <div className={cn("rounded-xl p-3 border", quantSubPanelClass)}>
                               <p className="text-[8px] text-zinc-600 uppercase font-bold mb-1">Range</p>
                               <p className="text-xs font-mono text-zinc-300">{advancedIntelligence.smartMoney.range}</p>
                             </div>
-                            <div className="bg-black/20 rounded-xl p-3 border border-white/5">
+                            <div className={cn("rounded-xl p-3 border", quantSubPanelClass)}>
                               <p className="text-[8px] text-zinc-600 uppercase font-bold mb-1">Support Dist</p>
                               <p className="text-xs font-mono text-zinc-300">{advancedIntelligence.smartMoney.supportDist}</p>
                             </div>
@@ -1653,9 +1746,80 @@ export default function App() {
                       </div>
                     </div>
 
+                    {advancedIntelligence.gradientBoosting && (
+                      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                        <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl", quantShellClass)}>
+                          <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <Brain className="w-3 h-3 text-cyan-400" /> Gradient Boosting
+                          </h4>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">Probability</span>
+                              <span className="text-xl font-mono text-cyan-400">{advancedIntelligence.gradientBoosting.probability}%</span>
+                            </div>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                              Horizon: {advancedIntelligence.gradientBoosting.horizon}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {advancedIntelligence.gradientBoosting.topFeatures.map((feature: string) => (
+                                <span key={feature} className="px-2 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-[9px] font-bold text-cyan-300 uppercase tracking-tighter">
+                                  {feature}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl", quantShellClass)}>
+                          <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <Activity className="w-3 h-3 text-emerald-400" /> LSTM Forecast
+                          </h4>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">Next Price</span>
+                              <span className="text-xl font-mono text-emerald-400">{formatCurrency(advancedIntelligence.lstmForecast.nextPrice)}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">Confidence Band</span>
+                              <span className="text-xs font-mono text-zinc-300">{advancedIntelligence.lstmForecast.confidenceBand}</span>
+                            </div>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                              Window: {advancedIntelligence.lstmForecast.candles} candles
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl", quantShellClass)}>
+                          <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <Shield className="w-3 h-3 text-amber-400" /> Regime and Agent
+                          </h4>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">{advancedIntelligence.regimeModel.model}</span>
+                              <span className="text-xs font-bold text-amber-300 uppercase">{advancedIntelligence.regimeModel.regime}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">{advancedIntelligence.hiddenStateModel.model}</span>
+                              <span className="text-xs font-bold text-indigo-300 uppercase">{advancedIntelligence.hiddenStateModel.state}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase">RL Agent</span>
+                              <span className="text-xs font-bold text-emerald-400 uppercase">{advancedIntelligence.reinforcementAgent.action}</span>
+                            </div>
+                            <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden">
+                              <div className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400" style={{ width: `${advancedIntelligence.signalConsensus.score}%` }} />
+                            </div>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                              Consensus: {advancedIntelligence.signalConsensus.verdict}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {/* Volatility Breakout & Pattern Recognition */}
-                      <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-xl flex gap-8">
+                      <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl flex gap-8", quantShellClass)}>
                         <div className="flex-1">
                           <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-6 flex items-center gap-2">
                             <Zap className="w-3 h-3 text-yellow-400" /> Volatility Breakout
@@ -1691,14 +1855,14 @@ export default function App() {
                               <span className="text-sm font-mono text-indigo-400">{advancedIntelligence.patternRecognition.confidence}%</span>
                             </div>
                             <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10 text-center">
-                              {advancedIntelligence.patternRecognition.status} → Target: {advancedIntelligence.patternRecognition.target}
+                              {advancedIntelligence.patternRecognition.status} {'->'} Target: {advancedIntelligence.patternRecognition.target}
                             </div>
                           </div>
                         </div>
                       </div>
 
                       {/* Market Sentiment Engine */}
-                      <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-xl relative overflow-hidden group">
+                      <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-xl relative overflow-hidden group", quantShellClass)}>
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <PieChart className="w-12 h-12 text-emerald-400" />
                         </div>
@@ -1743,13 +1907,13 @@ export default function App() {
 
                 {/* Sector Analysis & Money Flow */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-12">
-                  <div className="lg:col-span-2 bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("lg:col-span-2 backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <h3 className="text-sm font-bold text-white mb-8 uppercase tracking-widest flex items-center gap-3">
                       <PieChart className="w-5 h-5 text-indigo-400" /> Sector Strength Analyzer
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {quantData?.sectors.map((sector: any, i: number) => (
-                        <div key={i} className="p-5 bg-black/20 rounded-2xl border border-white/5 relative overflow-hidden">
+                        <div key={i} className={cn("p-5 rounded-2xl border relative overflow-hidden", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-4">
                             <span className="text-sm font-bold text-white">{sector.name}</span>
                             <span className={cn(
@@ -1771,7 +1935,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-8 shadow-xl">
+                  <div className={cn("backdrop-blur-md rounded-3xl border p-8 shadow-xl", quantShellClass)}>
                     <h3 className="text-sm font-bold text-white mb-8 uppercase tracking-widest flex items-center gap-3">
                       <ShieldAlert className="w-5 h-5 text-orange-400" /> Early Trend Detector
                     </h3>
@@ -1802,7 +1966,7 @@ export default function App() {
 
               {/* Data Table */}
             {data.length > 0 && (
-              <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 shadow-2xl overflow-hidden">
+              <div className={cn("backdrop-blur-md rounded-3xl border shadow-2xl overflow-hidden", quantShellClass)}>
                 <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between bg-black/20">
                   <h3 className="text-sm font-bold text-white uppercase tracking-widest">Execution Logs</h3>
                   <div className="flex items-center gap-4">
@@ -1857,7 +2021,7 @@ export default function App() {
 
           {/* Live Intelligence Sidebar */}
           <div className="lg:col-span-3 space-y-6">
-            <div className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-6 shadow-2xl sticky top-24">
+            <div className={cn("backdrop-blur-md rounded-3xl border p-6 shadow-2xl sticky top-24", quantShellClass)}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-6 flex items-center gap-2">
                 <div className="w-1 h-4 bg-orange-500 rounded-full" /> Live Intelligence
               </h3>
@@ -1870,7 +2034,7 @@ export default function App() {
                   </h4>
                   <div className="space-y-3">
                     {quantData?.momentum.slice(0, 4).map((m: any, i: number) => (
-                      <div key={i} className="p-3 bg-black/20 rounded-xl border border-white/5 hover:border-emerald-500/30 transition-colors group cursor-pointer">
+                      <div key={i} className={cn("p-3 rounded-xl border hover:border-emerald-500/30 transition-colors group cursor-pointer", quantSubPanelClass)}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">{m.symbol}</span>
                           <span className="text-[10px] font-mono text-emerald-400">+{m.priceChange}%</span>
@@ -1888,10 +2052,10 @@ export default function App() {
                   </h4>
                   <div className="space-y-3">
                     {quantData?.breakouts.slice(0, 3).map((b: any, i: number) => (
-                      <div key={i} className="p-3 bg-black/20 rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors group cursor-pointer">
+                      <div key={i} className={cn("p-3 rounded-xl border hover:border-indigo-500/30 transition-colors group cursor-pointer", quantSubPanelClass)}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-xs font-bold text-white group-hover:text-indigo-400 transition-colors">{b.symbol}</span>
-                          <span className="text-[10px] font-mono text-zinc-500">₹{b.level}</span>
+                          <span className="text-[10px] font-mono text-zinc-500">{formatCurrency(b.level)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-[9px] text-zinc-600 uppercase">Strength</span>
@@ -1938,7 +2102,7 @@ export default function App() {
             <TrendingUp className="w-4 h-4" />
             <span className="text-sm font-bold">StockPulse</span>
           </div>
-          <p className="text-xs text-zinc-400">Powered by Upstox API • Data delayed by 15 mins for free accounts</p>
+          <p className="text-xs text-zinc-400">Powered by Upstox API | Data delayed by 15 mins for free accounts</p>
           <div className="flex gap-4 text-xs font-medium text-zinc-500">
             <a href="#" className="hover:text-white transition-colors">Terms</a>
             <a href="#" className="hover:text-white transition-colors">Privacy</a>
