@@ -1,0 +1,5 @@
+{
+  "name": "Upstox Stock Visualizer",
+  "description": "Search stocks, fetch historical candle data from Upstox, and visualize with interactive charts.",
+  "requestFramePermissions": []
+}
