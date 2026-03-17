@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart3, Building2, Flame, Radar, TrendingUp } from 'lucide-react';
 
+/** Strip NSE_EQ| / BSE_EQ| / NSE_EQ: / BSE_EQ: prefixes for clean display */
+function cleanSymbol(raw: string): string {
+  return raw.replace(/^(NSE_EQ|BSE_EQ)[|:]/, '');
+}
+
 export type HedgeFundSignalScore = {
   rank: number;
   stockSymbol: string;
@@ -159,7 +164,7 @@ export function HedgeFundSignalRanking({ dashboard }: { dashboard?: HedgeFundSig
                     >
                       <td className="px-4 py-4 font-black text-zinc-400">#{signal.rank}</td>
                       <td className="px-4 py-4">
-                        <div className="font-bold text-white">{signal.stockSymbol}</div>
+                        <div className="font-bold text-white">{cleanSymbol(signal.stockSymbol)}</div>
                         <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">{signal.sector}</div>
                       </td>
                       <td className={`px-4 py-4 font-bold ${scoreTone(signal.momentumScore)}`}>{signal.momentumScore.toFixed(1)}</td>
@@ -186,7 +191,7 @@ export function HedgeFundSignalRanking({ dashboard }: { dashboard?: HedgeFundSig
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Selected Signal</p>
-                  <h5 className="mt-2 text-2xl font-black text-white">{selectedSignal.stockSymbol}</h5>
+                  <h5 className="mt-2 text-2xl font-black text-white">{cleanSymbol(selectedSignal.stockSymbol)}</h5>
                   <p className="mt-1 text-sm text-zinc-400">{selectedSignal.sector}</p>
                 </div>
                 <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-right">
@@ -268,7 +273,7 @@ export function HedgeFundSignalRanking({ dashboard }: { dashboard?: HedgeFundSig
               className={`rounded-2xl border bg-gradient-to-br p-4 text-left transition hover:-translate-y-0.5 ${heatTone(tile.finalScore)}`}
             >
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">{tile.sector}</p>
-              <h5 className="mt-2 text-lg font-black text-white">{tile.symbol}</h5>
+              <h5 className="mt-2 text-lg font-black text-white">{cleanSymbol(tile.symbol)}</h5>
               <div className="mt-3 flex items-end justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Momentum</p>

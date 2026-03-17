@@ -17,6 +17,11 @@ import { HedgeFundSignalRanking, type HedgeFundSignalDashboard } from './HedgeFu
 import { UltraQuantHeatmap } from './UltraQuantHeatmap';
 import { fetchJson } from '../lib/api';
 
+/** Strip NSE_EQ| / BSE_EQ| / NSE_EQ: / BSE_EQ: prefixes for clean display */
+function cleanSymbol(raw: string): string {
+  return raw.replace(/^(NSE_EQ|BSE_EQ)[|:]/, '');
+}
+
 type AnalysisResult = {
   symbol: string;
   sector: string;
@@ -290,7 +295,7 @@ const UltraQuantTab = () => {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Top Opportunity</p>
-                <h3 className="mt-2 text-3xl font-black text-white">{topPick.symbol}</h3>
+                <h3 className="mt-2 text-3xl font-black text-white">{cleanSymbol(topPick.symbol)}</h3>
                 <p className="mt-1 text-sm text-zinc-400">{topPick.sector} / {topPick.industry}</p>
               </div>
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-right">
@@ -376,7 +381,7 @@ const UltraQuantTab = () => {
                 {results.map((stock) => (
                   <tr key={stock.symbol} className="hover:bg-white/[0.03]">
                     <td className="px-6 py-4">
-                      <div className="font-bold text-white">{stock.symbol}</div>
+                      <div className="font-bold text-white">{cleanSymbol(stock.symbol)}</div>
                       <div className="text-[11px] text-zinc-500">{stock.sector}</div>
                     </td>
                     <td className="px-4 py-4 font-bold text-cyan-300">{stock.score.toFixed(1)}</td>
@@ -459,7 +464,7 @@ const UltraQuantTab = () => {
               {alerts.slice(0, 8).map((alert, index) => (
                 <div key={`${alert.stockSymbol}-${index}`} className="rounded-2xl border border-rose-500/10 bg-rose-500/5 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-white">{alert.stockSymbol}</span>
+                    <span className="font-bold text-white">{cleanSymbol(alert.stockSymbol)}</span>
                     <span className="text-xs font-bold text-rose-300">{alert.confidenceScore.toFixed(1)}%</span>
                   </div>
                   <p className="mt-1 text-[11px] uppercase tracking-[0.2em] text-zinc-500">{alert.signalType}</p>

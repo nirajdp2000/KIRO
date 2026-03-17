@@ -43,7 +43,15 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { InstitutionalAnalytics } from './components/InstitutionalAnalytics';
 import UltraQuantTab from './components/UltraQuantTab';
+import MultibaggerScanner from './components/MultibaggerScanner';
+import AssetSearch from './components/AssetSearch';
+import AnalyticsFilters, { FilterState, DEFAULT_FILTERS } from './components/AnalyticsFilters';
 import { fetchJson } from './lib/api';
+
+/** Strip NSE_EQ| / BSE_EQ| / NSE_EQ: / BSE_EQ: prefixes for clean display */
+function cleanSymbol(raw: string): string {
+  return raw.replace(/^(NSE_EQ|BSE_EQ)[|:]/, '');
+}
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -127,7 +135,8 @@ export default function App() {
   const [chartType, setChartType] = useState<'line' | 'area' | 'bar'>('area');
   const [showSMA20, setShowSMA20] = useState(false);
   const [showSMA50, setShowSMA50] = useState(false);
-  const [activeTab, setActiveTab] = useState<'analytics' | 'quant' | 'institutional' | 'ultraQuant'>('analytics');
+  const [advFilters, setAdvFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [activeTab, setActiveTab] = useState<'analytics' | 'quant' | 'institutional' | 'ultraQuant' | 'multibagger'>('analytics');
   const [deskTheme, setDeskTheme] = useState<'dark' | 'light'>(() => {
     if (typeof window === 'undefined') {
       return 'dark';
@@ -154,6 +163,7 @@ export default function App() {
   
   const searchRef = useRef<HTMLDivElement>(null);
   const isUltraQuantTab = activeTab === 'ultraQuant';
+  const isMultibaggerTab = activeTab === 'multibagger';
   const isDeskLight = deskTheme === 'light';
   const quantShellClass = isDeskLight
     ? 'bg-white/90 border-zinc-200 text-zinc-900 shadow-[0_30px_90px_rgba(15,23,42,0.12)]'
@@ -177,33 +187,7 @@ export default function App() {
     window.localStorage.setItem('stockpulse-desk-theme', deskTheme);
   }, [deskTheme]);
 
-  // Handle autocomplete
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const fetchSuggestions = async () => {
-      if (query.length < 2) {
-        setSuggestions([]);
-        return;
-      }
-      try {
-        const json = await fetchJson<Stock[]>(`/api/stocks/search?q=${query}`, {
-          signal: controller.signal
-        });
-        setSuggestions(json);
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          console.error('Search error:', err);
-        }
-      }
-    };
-
-    const timer = setTimeout(fetchSuggestions, 300);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [query]);
+  // Autocomplete is now handled by AssetSearch component (useStockSearch hook)
 
   // Initial fetch and periodic refresh for Quant Lab
   useEffect(() => {
@@ -521,7 +505,7 @@ export default function App() {
                 <Sparkles className="w-3.5 h-3.5 text-white" />
               </div>
               <p className="text-[11px] font-bold text-white uppercase tracking-widest flex items-center gap-2">
-                Top AI Pick: <span className="text-indigo-100">{marketIntelligence.topTradeIdeas[0].symbol}</span>
+                Top AI Pick: <span className="text-indigo-100">{cleanSymbol(marketIntelligence.topTradeIdeas[0].symbol)}</span>
                 <span className="bg-emerald-400 text-indigo-900 px-1.5 py-0.5 rounded text-[9px] font-black">BUY</span>
               </p>
               <p className="hidden md:block text-[10px] text-indigo-200 font-medium italic">
@@ -566,13 +550,7 @@ export default function App() {
             >
               Analytics
             </button>
-            <button 
-              onClick={() => setActiveTab('quant')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'quant' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-            >
-              Quant Lab
-              <span className="absolute -top-1 -right-4 bg-emerald-500 text-[8px] text-white px-1 rounded-sm animate-pulse font-bold">NEW</span>
-            </button>
+
             <button 
               onClick={() => setActiveTab('institutional')}
               className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'institutional' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
@@ -586,6 +564,13 @@ export default function App() {
             >
               Ultra Quant
               <span className="absolute -top-1 -right-5 bg-cyan-400 text-[8px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">AI</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('multibagger')}
+              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'multibagger' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
+            >
+              Multibagger
+              <span className="absolute -top-1 -right-5 bg-violet-400 text-[8px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">NEW</span>
             </button>
             <a href="#" className="hover:text-zinc-300 transition-colors">Watchlist</a>
             <a href="#" className="hover:text-zinc-300 transition-colors">Signals</a>
@@ -620,13 +605,7 @@ export default function App() {
           >
             Analytics
           </button>
-          <button 
-            onClick={() => setActiveTab('quant')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'quant' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-          >
-            Quant Lab
-            <span className="absolute top-1.5 -right-3 bg-emerald-500 text-[7px] text-white px-1 rounded-sm animate-pulse font-bold">NEW</span>
-          </button>
+
           <button 
             onClick={() => setActiveTab('institutional')}
             className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'institutional' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
@@ -641,6 +620,13 @@ export default function App() {
             Ultra Quant
             <span className="absolute top-1.5 -right-3 bg-cyan-400 text-[7px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">AI</span>
           </button>
+          <button 
+            onClick={() => setActiveTab('multibagger')}
+            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'multibagger' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
+          >
+            Multibagger
+            <span className="absolute top-1.5 -right-3 bg-violet-400 text-[7px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">NEW</span>
+          </button>
           <a href="#" className="hover:text-zinc-300 transition-colors py-3 whitespace-nowrap">Watchlist</a>
           <a href="#" className="hover:text-zinc-300 transition-colors py-3 whitespace-nowrap">Signals</a>
         </div>
@@ -649,50 +635,29 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {isUltraQuantTab ? (
           <UltraQuantTab />
+        ) : isMultibaggerTab ? (
+          <MultibaggerScanner />
         ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
           {/* Controls Panel */}
-          <div className="lg:col-span-2 space-y-6">
-            <section className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-5 shadow-2xl">
+          <div className="lg:col-span-3 space-y-6">
+            <section className="bg-zinc-900/50 backdrop-blur-md rounded-3xl border border-white/5 p-5 shadow-2xl sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-8 flex items-center gap-2">
                 <div className="w-1 h-4 bg-indigo-500 rounded-full" /> Terminal Control
               </h2>
 
               <div className="space-y-6">
                 {/* Stock Search */}
-                <div className="relative" ref={searchRef}>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2 ml-1">Asset Search</label>
-                  <div className="relative group">
-                    <input
-                      type="text"
-                      placeholder="Symbol (e.g. INFY)"
-                      className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all outline-none placeholder:text-zinc-700"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                    />
-                    <Search className="absolute left-4 top-3.5 w-4 h-4 text-zinc-600 group-focus-within:text-indigo-400 transition-colors" />
-                  </div>
-                  
-                  {suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-3 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
-                      {suggestions.map((s) => (
-                        <button
-                          key={s.key}
-                          className="w-full px-5 py-4 text-left text-sm hover:bg-white/5 flex flex-col border-b border-white/5 last:border-0 transition-colors"
-                          onClick={() => {
-                            setSelectedStock(s);
-                            setQuery(s.symbol);
-                            setSuggestions([]);
-                          }}
-                        >
-                          <span className="font-bold text-zinc-100">{s.symbol}</span>
-                          <span className="text-[10px] text-zinc-500 font-medium">{s.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <AssetSearch
+                  query={query}
+                  onQueryChange={setQuery}
+                  onSelect={(s) => {
+                    setSelectedStock(s);
+                    setSuggestions([]);
+                  }}
+                  containerRef={searchRef}
+                />
 
                 {/* Interval Selection */}
                 <div>
@@ -717,7 +682,7 @@ export default function App() {
 
                 {/* Indicators */}
                 <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2 ml-1">Premium Filters</label>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2 ml-1">Chart Overlays</label>
                   <div className="space-y-2">
                     <button 
                       onClick={() => setShowSMA20(!showSMA20)}
@@ -762,6 +727,11 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Advanced Filters */}
+                <div className="border-t border-white/5 pt-4">
+                  <AnalyticsFilters filters={advFilters} onChange={setAdvFilters} />
+                </div>
+
                 <button
                   onClick={() => fetchData()}
                   disabled={loading || !selectedStock}
@@ -775,10 +745,10 @@ export default function App() {
           </div>
 
           {/* Chart Panel */}
-          <div className="lg:col-span-7 space-y-6">
+          <div className="lg:col-span-6 space-y-6">
             {/* Market Sentiment Bar */}
             {quantData && (
-              <div className="bg-zinc-900/50 backdrop-blur-md rounded-2xl border border-white/5 p-4 flex items-center justify-between shadow-xl">
+              <div className="bg-zinc-900/50 backdrop-blur-md rounded-2xl border border-white/5 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
                     <div className={cn("w-2 h-2 rounded-full", isBullishStatus(quantData.sentiment.status) ? "bg-emerald-500" : "bg-rose-500")} />
@@ -788,13 +758,26 @@ export default function App() {
                     {quantData.sentiment.status}
                   </span>
                 </div>
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* Signal Badges */}
+                  {isBullishStatus(quantData.sentiment.status) && (
+                    <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest">Bullish</span>
+                  )}
+                  {!isBullishStatus(quantData.sentiment.status) && (
+                    <span className="text-[9px] font-black px-2 py-1 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/20 uppercase tracking-widest">Bearish</span>
+                  )}
+                  {quantData.sentiment.confidence > 70 && (
+                    <span className="text-[9px] font-black px-2 py-1 rounded-full bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 uppercase tracking-widest">High Momentum</span>
+                  )}
+                  {quantData.surges && quantData.surges.length > 3 && (
+                    <span className="text-[9px] font-black px-2 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 uppercase tracking-widest">Volume Surge</span>
+                  )}
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">A/D Ratio</span>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">A/D</span>
                     <span className="text-xs font-mono text-zinc-300">{quantData.sentiment.adRatio}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Confidence</span>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Conf</span>
                     <span className="text-xs font-mono text-indigo-400">{quantData.sentiment.confidence}%</span>
                   </div>
                 </div>
@@ -820,7 +803,8 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-2xl font-bold text-white mb-1">
-                        {selectedStock.symbol} <span className="text-zinc-500 text-sm font-medium">/ {selectedStock.name}</span>
+                        {cleanSymbol(selectedStock.symbol)}
+                        <span className="text-zinc-500 text-sm font-medium ml-2">/ {selectedStock.name}</span>
                       </h3>
                       <div className="flex items-center gap-3">
                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">AI Confidence</span>
@@ -874,7 +858,11 @@ export default function App() {
                 <div className="flex items-center gap-6">
                   <div>
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                      Market Dynamics {selectedStock && <span className="text-indigo-400 font-mono text-sm ml-2">[{selectedStock.symbol}]</span>}
+                      Market Dynamics {selectedStock && (
+                        <span className="text-indigo-400 font-mono text-sm ml-2">
+                          [{cleanSymbol(selectedStock.symbol)}]
+                        </span>
+                      )}
                     </h3>
                     <p className="text-[10px] text-zinc-500 font-medium uppercase tracking-widest mt-1">Real-time algorithmic visualization</p>
                   </div>
@@ -1265,7 +1253,7 @@ export default function App() {
                           <div className="space-y-3">
                             {aiInsights.momentum.slice(0, 3).map((m: any, i: number) => (
                               <div key={i} className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
-                                <span className="text-xs font-bold text-zinc-300">{m.symbol}</span>
+                                <span className="text-xs font-bold text-zinc-300">{cleanSymbol(m.symbol)}</span>
                                 <span className="text-[10px] font-mono text-emerald-400">+{m.change5m}%</span>
                               </div>
                             ))}
@@ -1279,7 +1267,7 @@ export default function App() {
                           <div className="space-y-3">
                             {aiInsights.breakouts.slice(0, 3).map((b: any, i: number) => (
                               <div key={i} className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
-                                <span className="text-xs font-bold text-zinc-300">{b.symbol}</span>
+                                <span className="text-xs font-bold text-zinc-300">{cleanSymbol(b.symbol)}</span>
                                 <span className="text-[10px] font-medium text-zinc-500">{b.type}</span>
                               </div>
                             ))}
@@ -1410,7 +1398,7 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center justify-between mb-4">
                                   <div className="flex items-center gap-3">
-                                    <span className="text-base font-bold text-white tracking-tight">{idea.symbol}</span>
+                                    <span className="text-base font-bold text-white tracking-tight">{cleanSymbol(idea.symbol)}</span>
                                     <span className="text-[9px] font-bold px-2 py-0.5 bg-black/40 text-zinc-400 rounded-md border border-white/5 uppercase tracking-widest">{idea.timeframe}</span>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -1545,7 +1533,7 @@ export default function App() {
                       {quantData?.momentum.map((m: any, i: number) => (
                         <div key={i} className={cn("p-4 rounded-2xl border hover:border-emerald-500/30 transition-colors", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-bold text-white">{m.symbol}</span>
+                            <span className="text-sm font-bold text-white">{cleanSymbol(m.symbol)}</span>
                             <span className="text-[10px] font-bold text-emerald-400">+{m.priceChange}%</span>
                           </div>
                           <div className="flex items-center justify-between">
@@ -1569,7 +1557,7 @@ export default function App() {
                       {quantData?.breakouts.map((b: any, i: number) => (
                         <div key={i} className={cn("p-4 rounded-2xl border hover:border-indigo-500/30 transition-colors", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-bold text-white">{b.symbol}</span>
+                            <span className="text-sm font-bold text-white">{cleanSymbol(b.symbol)}</span>
                             <span className="text-[10px] font-bold text-indigo-400">SCORE: {b.strength}</span>
                           </div>
                           <div className="grid grid-cols-2 gap-4 mt-3">
@@ -1599,7 +1587,7 @@ export default function App() {
                       {quantData?.surges.map((s: any, i: number) => (
                         <div key={i} className={cn("p-4 rounded-2xl border border-l-4 border-l-orange-500", quantSubPanelClass)}>
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-bold text-white">{s.symbol}</span>
+                            <span className="text-sm font-bold text-white">{cleanSymbol(s.symbol)}</span>
                             <span className="text-[10px] font-bold text-orange-400">{s.ratio}x AVG</span>
                           </div>
                           <p className="text-[10px] text-zinc-400 mb-2">{s.alert}</p>
@@ -1621,7 +1609,7 @@ export default function App() {
                       {quantData?.indicators.map((ind: any, i: number) => (
                         <div key={i} className={cn("flex items-center justify-between p-4 rounded-2xl border", quantSubPanelClass)}>
                           <div>
-                            <p className="text-sm font-bold text-white">{ind.symbol}</p>
+                            <p className="text-sm font-bold text-white">{cleanSymbol(ind.symbol)}</p>
                             <p className="text-[10px] text-zinc-500">RSI: {ind.rsi}</p>
                           </div>
                           <div className="text-right">
@@ -1943,7 +1931,7 @@ export default function App() {
                       {quantData?.trends.map((t: any, i: number) => (
                         <div key={i} className="space-y-3">
                           <div className="flex items-center justify-between">
-                            <span className="text-sm font-bold text-white">{t.symbol}</span>
+                            <span className="text-sm font-bold text-white">{cleanSymbol(t.symbol)}</span>
                             <span className="text-xs font-mono text-indigo-400">{t.score}</span>
                           </div>
                           <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden flex">
@@ -2036,7 +2024,7 @@ export default function App() {
                     {quantData?.momentum.slice(0, 4).map((m: any, i: number) => (
                       <div key={i} className={cn("p-3 rounded-xl border hover:border-emerald-500/30 transition-colors group cursor-pointer", quantSubPanelClass)}>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">{m.symbol}</span>
+                          <span className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">{cleanSymbol(m.symbol)}</span>
                           <span className="text-[10px] font-mono text-emerald-400">+{m.priceChange}%</span>
                         </div>
                         <p className="text-[9px] text-zinc-500 uppercase tracking-tighter">{m.alert}</p>
@@ -2054,7 +2042,7 @@ export default function App() {
                     {quantData?.breakouts.slice(0, 3).map((b: any, i: number) => (
                       <div key={i} className={cn("p-3 rounded-xl border hover:border-indigo-500/30 transition-colors group cursor-pointer", quantSubPanelClass)}>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-white group-hover:text-indigo-400 transition-colors">{b.symbol}</span>
+                          <span className="text-xs font-bold text-white group-hover:text-indigo-400 transition-colors">{cleanSymbol(b.symbol)}</span>
                           <span className="text-[10px] font-mono text-zinc-500">{formatCurrency(b.level)}</span>
                         </div>
                         <div className="flex items-center justify-between">

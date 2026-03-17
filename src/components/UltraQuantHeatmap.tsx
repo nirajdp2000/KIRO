@@ -11,6 +11,11 @@ type UltraQuantHeatmapProps = {
   stocks: HeatmapStock[];
 };
 
+/** Strip NSE_EQ| / BSE_EQ| / NSE_EQ: / BSE_EQ: prefixes for clean display */
+function cleanSymbol(raw: string): string {
+  return raw.replace(/^(NSE_EQ|BSE_EQ)[|:]/, '');
+}
+
 const toneForScore = (score: number) => {
   if (score >= 85) return 'from-emerald-500/25 via-emerald-400/15 to-cyan-400/10 border-emerald-400/20';
   if (score >= 70) return 'from-cyan-500/20 via-sky-400/10 to-indigo-400/10 border-cyan-400/20';
@@ -39,7 +44,7 @@ export function UltraQuantHeatmap({ stocks }: UltraQuantHeatmapProps) {
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-black tracking-tight text-white">{stock.symbol}</p>
+                <p className="text-sm font-black tracking-tight text-white">{cleanSymbol(stock.symbol)}</p>
                 <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-400">{stock.sector}</p>
               </div>
               <p className="text-xs font-black text-white">{stock.score.toFixed(0)}</p>
