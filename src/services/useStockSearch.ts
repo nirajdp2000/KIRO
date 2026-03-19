@@ -17,12 +17,13 @@ let _cache: SearchStock[] | null = null;
 let _loadPromise: Promise<SearchStock[]> | null = null;
 
 async function loadUniverse(): Promise<SearchStock[]> {
-  if (_cache) return _cache;
+  if (_cache && _cache.length > 1000) return _cache;  // only trust cache if it has real data
   if (_loadPromise) return _loadPromise;
   _loadPromise = fetch('/api/stocks/universe')
     .then(r => r.json())
     .then((data: SearchStock[]) => {
       _cache = data;
+      _loadPromise = null;
       console.log(`[useStockSearch] Loaded ${data.length} searchable stocks`);
       return data;
     });
@@ -35,16 +36,18 @@ function rankSearch(universe: SearchStock[], q: string): SearchStock[] {
   const exact: SearchStock[]      = [];
   const startsWith: SearchStock[] = [];
   const partial: SearchStock[]    = [];
+  const nameMatch: SearchStock[]  = [];
 
   for (const s of universe) {
     const sym = s.symbol.toUpperCase();
-    if (sym === up)           { exact.push(s);      continue; }
-    if (sym.startsWith(up))   { startsWith.push(s); continue; }
-    if (sym.includes(up))     { partial.push(s); }
+    const name = (s.name || '').toUpperCase();
+    if (sym === up)                        { exact.push(s);      continue; }
+    if (sym.startsWith(up))               { startsWith.push(s); continue; }
+    if (sym.includes(up))                 { partial.push(s);    continue; }
+    if (name.includes(up))                { nameMatch.push(s); }
   }
 
-  const results = [...exact, ...startsWith, ...partial].slice(0, 20);
-  console.log(`[useStockSearch] q="${q}" universe=${universe.length} results=${results.length}`);
+  const results = [...exact, ...startsWith, ...partial, ...nameMatch].slice(0, 20);
   return results;
 }
 
@@ -57,7 +60,7 @@ export function useStockSearch(debounceMs = 200) {
 
   // Preload universe on mount
   useEffect(() => {
-    if (_cache) { setUniverse(_cache); setUniverseReady(true); return; }
+    if (_cache && _cache.length > 1000) { setUniverse(_cache); setUniverseReady(true); return; }
     loadUniverse().then(data => {
       setUniverse(data);
       setUniverseReady(true);

@@ -7,11 +7,11 @@ import {
   RefreshCw,
   Rocket,
   Shield,
+  Target,
   TrendingUp,
   Zap,
 } from 'lucide-react';
 
-/** Strip NSE_EQ| / BSE_EQ| / NSE_EQ: / BSE_EQ: prefixes for clean display */
 function cleanSymbol(raw: string): string {
   return raw.replace(/^(NSE_EQ|BSE_EQ)[|:]/, '');
 }
@@ -23,29 +23,107 @@ import {
   type ScanCycle,
 } from '../services/MultibaggerScannerService';
 
+// ─── Formula Presets ──────────────────────────────────────────────────────────
+
+type FormulaWeights = {
+  trend: number;
+  momentum: number;
+  relativeStrength: number;
+  volume: number;
+  breakout: number;
+  sector: number;
+  stability: number;
+};
+
+type FormulaPreset = {
+  id: string;
+  label: string;
+  icon: string;
+  description: string;
+  color: string;
+  borderColor: string;
+  textColor: string;
+  weights: FormulaWeights;
+};
+
+const FORMULA_PRESETS: FormulaPreset[] = [
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    icon: 'B',
+    description: 'Equal-weight across all 7 factors. Best for general screening.',
+    color: 'bg-violet-500/15',
+    borderColor: 'border-violet-400/30',
+    textColor: 'text-violet-300',
+    weights: { trend: 0.15, momentum: 0.15, relativeStrength: 0.15, volume: 0.15, breakout: 0.15, sector: 0.12, stability: 0.13 },
+  },
+  {
+    id: 'momentum_blast',
+    label: 'Momentum Blast',
+    icon: 'M',
+    description: 'Momentum (35%) + Relative Strength (20%). Captures fast movers with strong price action.',
+    color: 'bg-rose-500/15',
+    borderColor: 'border-rose-400/30',
+    textColor: 'text-rose-300',
+    weights: { trend: 0.10, momentum: 0.35, relativeStrength: 0.20, volume: 0.15, breakout: 0.10, sector: 0.05, stability: 0.05 },
+  },
+  {
+    id: 'trend_compounder',
+    label: 'Trend Compounder',
+    icon: 'T',
+    description: 'Trend (35%) + Stability (20%). Finds durable long-duration compounders with low volatility.',
+    color: 'bg-emerald-500/15',
+    borderColor: 'border-emerald-400/30',
+    textColor: 'text-emerald-300',
+    weights: { trend: 0.35, momentum: 0.10, relativeStrength: 0.10, volume: 0.10, breakout: 0.05, sector: 0.10, stability: 0.20 },
+  },
+  {
+    id: 'breakout_hunter',
+    label: 'Breakout Hunter',
+    icon: 'BH',
+    description: 'Breakout (30%) + Volume (25%). Identifies stocks near 52-week highs with volume confirmation.',
+    color: 'bg-amber-500/15',
+    borderColor: 'border-amber-400/30',
+    textColor: 'text-amber-300',
+    weights: { trend: 0.10, momentum: 0.15, relativeStrength: 0.10, volume: 0.25, breakout: 0.30, sector: 0.05, stability: 0.05 },
+  },
+  {
+    id: 'smart_money',
+    label: 'Smart Money',
+    icon: 'SM',
+    description: 'Sector (25%) + Trend (25%) + RS (20%). Follows institutional rotation and sector leadership.',
+    color: 'bg-cyan-500/15',
+    borderColor: 'border-cyan-400/30',
+    textColor: 'text-cyan-300',
+    weights: { trend: 0.25, momentum: 0.10, relativeStrength: 0.20, volume: 0.10, breakout: 0.10, sector: 0.25, stability: 0.00 },
+  },
+  {
+    id: 'stability_king',
+    label: 'Stability King',
+    icon: 'SK',
+    description: 'Stability (30%) + Trend (25%). Low-volatility compounders for conservative portfolios.',
+    color: 'bg-indigo-500/15',
+    borderColor: 'border-indigo-400/30',
+    textColor: 'text-indigo-300',
+    weights: { trend: 0.25, momentum: 0.08, relativeStrength: 0.12, volume: 0.05, breakout: 0.05, sector: 0.15, stability: 0.30 },
+  },
+];
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CYCLES: { value: ScanCycle; label: string }[] = [
-  { value: 30,  label: '30 Days'  },
-  { value: 60,  label: '60 Days'  },
-  { value: 90,  label: '90 Days'  },
-  { value: 120, label: '120 Days' },
-  { value: 180, label: '180 Days' },
-  { value: 300, label: '300 Days' },
+  { value: 30,  label: '30D' },
+  { value: 60,  label: '60D' },
+  { value: 90,  label: '90D' },
+  { value: 120, label: '120D' },
+  { value: 180, label: '180D' },
+  { value: 300, label: '300D' },
 ];
 
-/**
- * Auto-refresh interval per cycle (ms).
- * Shorter cycles refresh more aggressively to capture fast momentum.
- */
 const REFRESH_INTERVAL: Record<ScanCycle, number> = {
-  30: 30_000, 60: 45_000, 90: 60_000, 120: 90_000, 180: 120_000, 300: 180_000,
+  30: 1_800_000, 60: 1_800_000, 90: 1_800_000, 120: 1_800_000, 180: 1_800_000, 300: 1_800_000,
 };
 
-/**
- * Human-readable weight description per cycle.
- * Mirrors MB_CYCLE_WEIGHTS on the server.
- */
 const CYCLE_CONTEXT: Record<ScanCycle, string> = {
   30:  'Short cycle — momentum (25%) + breakout (15%) heavy. Captures fast movers and volume spikes.',
   60:  'Short-medium — momentum (23%) + trend (18%). Balances speed with early trend confirmation.',
@@ -81,19 +159,52 @@ const volumeBadge = (signal: MultibaggerStock['volumeSignal']) => {
 
 const fmtPct = (v: number) => (v >= 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(1)}%`);
 
+/** Re-rank ALL stocks using custom formula weights (client-side) */
+function applyFormula(
+  stocks: MultibaggerStock[],
+  weights: FormulaWeights
+): (MultibaggerStock & { originalRank: number; rankDelta: number })[] {
+  const scored = stocks.map((s) => {
+    const newScore =
+      s.trendScore * weights.trend +
+      s.momentumScore * weights.momentum +
+      s.relativeStrength * weights.relativeStrength +
+      s.volumeScore * weights.volume +
+      s.breakoutScore * weights.breakout +
+      s.sectorScore * weights.sector +
+      s.stabilityScore * weights.stability;
+    return { ...s, originalRank: s.rank, bullishScore: Math.round(newScore * 10) / 10 };
+  });
+  return scored
+    .sort((a, b) => b.bullishScore - a.bullishScore)
+    .map((s, i) => ({ ...s, rank: i + 1, rankDelta: s.originalRank - (i + 1) }));
+}
+
+/** Group stocks by sector and compute aggregate stats */
+function buildSectorMap(stocks: MultibaggerStock[]) {
+  const map = new Map<string, { stocks: MultibaggerStock[]; totalScore: number }>();
+  for (const s of stocks) {
+    const key = s.sector || 'Other';
+    if (!map.has(key)) map.set(key, { stocks: [], totalScore: 0 });
+    const entry = map.get(key)!;
+    entry.stocks.push(s);
+    entry.totalScore += s.bullishScore;
+  }
+  return Array.from(map.entries())
+    .map(([sector, { stocks: ss, totalScore }]) => ({
+      sector,
+      count: ss.length,
+      avgScore: Math.round((totalScore / ss.length) * 10) / 10,
+      leaders: ss.slice(0, 3).map((s) => cleanSymbol(s.symbol)),
+      topScore: ss[0]?.bullishScore ?? 0,
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-const StatCard = ({
-  label, value, tone = 'text-white',
-}: { label: string; value: string | number; tone?: string }) => (
-  <div className="rounded-2xl border border-white/5 bg-black/25 p-4">
-    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">{label}</p>
-    <p className={`mt-2 text-2xl font-black ${tone}`}>{value}</p>
-  </div>
-);
-
-const ScoreBar = ({ score }: { score: number }) => (
-  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+const ScoreBar = ({ score, className = '' }: { score: number; className?: string }) => (
+  <div className={`h-1.5 w-full overflow-hidden rounded-full bg-white/5 ${className}`}>
     <div
       className={`${scoreBarClass(score)} h-full transition-all duration-500`}
       style={{ width: `${Math.min(Math.max(score, 0), 100)}%` }}
@@ -101,12 +212,16 @@ const ScoreBar = ({ score }: { score: number }) => (
   </div>
 );
 
-/** Factor row: label + value + progress bar */
-const FactorRow = ({ label, score }: { label: string; score: number }) => (
+const FactorRow = ({ label, score, weight }: { label: string; score: number; weight?: number }) => (
   <div className="space-y-1.5">
     <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-zinc-500">
       <span>{label}</span>
-      <span className={`font-bold ${scoreTone(score)}`}>{score.toFixed(1)}</span>
+      <div className="flex items-center gap-2">
+        {weight !== undefined && (
+          <span className="text-[10px] text-zinc-600">{(weight * 100).toFixed(0)}%</span>
+        )}
+        <span className={`font-bold ${scoreTone(score)}`}>{score.toFixed(1)}</span>
+      </div>
     </div>
     <ScoreBar score={score} />
   </div>
@@ -120,6 +235,8 @@ const MultibaggerScanner: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [activeFormula, setActiveFormula] = useState<string>('balanced');
 
   const cache = useRef<Partial<Record<ScanCycle, MultibaggerScanResult>>>({});
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -137,6 +254,7 @@ const MultibaggerScanner: React.FC = () => {
       cache.current[targetCycle] = data;
       setResult(data);
       setSelectedSymbol(data.stocks[0]?.symbol ?? null);
+      setLastRefreshed(new Date());
     } catch (err: any) {
       setError(err.message || 'Scan failed. Retrying shortly.');
     } finally {
@@ -151,48 +269,63 @@ const MultibaggerScanner: React.FC = () => {
     return () => { if (refreshTimer.current) clearInterval(refreshTimer.current); };
   }, [cycle, runScan]);
 
-  const stocks = result?.stocks ?? [];
+  const preset = FORMULA_PRESETS.find((p) => p.id === activeFormula) ?? FORMULA_PRESETS[0];
+  const rawStocks = result?.stocks ?? [];
+  // Always apply formula so re-ranking is always visible (balanced uses equal-ish weights too)
+  const stocks = applyFormula(rawStocks, preset.weights);
   const selectedStock = stocks.find((s) => s.symbol === selectedSymbol) ?? stocks[0] ?? null;
+  const sectorMap = buildSectorMap(stocks);
+  const leadSector = sectorMap[0];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
 
       {/* ── Header ── */}
-      <section className="rounded-[2rem] border border-violet-500/10 bg-[radial-gradient(circle_at_top_right,_rgba(139,92,246,0.18),_transparent_30%),linear-gradient(180deg,rgba(4,10,18,0.95),rgba(8,12,18,0.95))] p-8 shadow-2xl shadow-black/40">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-2xl">
-            <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.3em] text-violet-300">
+      <section className="rounded-[2rem] border border-violet-500/10 bg-[radial-gradient(circle_at_top_right,_rgba(139,92,246,0.18),_transparent_30%),linear-gradient(180deg,rgba(4,10,18,0.95),rgba(8,12,18,0.95))] p-7 shadow-2xl shadow-black/40">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-xl">
+            <p className="mb-2 inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.3em] text-violet-300">
               <Rocket className="h-3.5 w-3.5" />
               Multibagger Scanner · Hedge-Fund Grade
             </p>
-            <h2 className="text-3xl font-black tracking-tight text-white md:text-4xl">
-              7-factor bullish scoring model across all timeframes
+            <h2 className="text-2xl font-black tracking-tight text-white md:text-3xl">
+              7-factor bullish scoring · {stocks.length} candidates
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400">
-              Trend alignment · Momentum blend · Relative strength · Volume accumulation ·
-              Breakout proximity · Sector rotation · Stability — weights shift per cycle.
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              Trend · Momentum · RS · Volume · Breakout · Sector · Stability — switch formula to re-rank instantly.
             </p>
           </div>
 
-          <div className="grid w-full max-w-[32rem] grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Universe"    value={result?.scannedUniverse ?? '--'} />
-            <StatCard label="Top 100"     value={result?.returned ?? '--'}        tone="text-violet-300" />
-            <StatCard label="Avg Score"   value={result ? result.avgBullishScore.toFixed(1) : '--'} tone="text-amber-300" />
-            <StatCard label="Lead Sector" value={result?.leadingSector ?? '--'}   tone="text-emerald-300" />
+          {/* Stats row */}
+          <div className="flex flex-wrap gap-3">
+            <div className="rounded-2xl border border-white/5 bg-black/25 px-5 py-3 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Universe</p>
+              <p className="mt-1 text-xl font-black text-white">{result?.scannedUniverse ?? '--'}</p>
+            </div>
+            <div className="rounded-2xl border border-white/5 bg-black/25 px-5 py-3 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Returned</p>
+              <p className="mt-1 text-xl font-black text-violet-300">{result?.returned ?? '--'}</p>
+            </div>
+            <div className="rounded-2xl border border-white/5 bg-black/25 px-5 py-3 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Avg Score</p>
+              <p className="mt-1 text-xl font-black text-amber-300">
+                {stocks.length ? (stocks.reduce((s, x) => s + x.bullishScore, 0) / stocks.length).toFixed(1) : '--'}
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* ── Cycle selector ── */}
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mr-1">Cycle:</span>
+        {/* ── Cycle + controls row ── */}
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">Cycle:</span>
           {CYCLES.map(({ value, label }) => (
             <button
               key={value}
               onClick={() => setCycle(value)}
               className={[
-                'rounded-xl px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.18em] transition-all border',
+                'rounded-xl px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-all border',
                 cycle === value
-                  ? 'bg-violet-500/20 border-violet-400/40 text-violet-200 shadow-[0_0_16px_rgba(139,92,246,0.15)]'
+                  ? 'bg-violet-500/20 border-violet-400/40 text-violet-200 shadow-[0_0_12px_rgba(139,92,246,0.15)]'
                   : 'bg-black/25 border-white/10 text-zinc-400 hover:border-violet-400/30 hover:text-zinc-200',
               ].join(' ')}
             >
@@ -202,21 +335,77 @@ const MultibaggerScanner: React.FC = () => {
           <button
             onClick={() => runScan(cycle, true)}
             disabled={loading}
-            className="ml-auto inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.18em] text-zinc-400 transition hover:border-violet-400/30 hover:text-white disabled:opacity-50"
+            className="ml-auto inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-zinc-400 transition hover:border-violet-400/30 hover:text-white disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
+          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">
+            <span className={`h-2 w-2 rounded-full ${loading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+            {loading ? 'Refreshing' : lastRefreshed ? `${lastRefreshed.toLocaleTimeString()}` : 'Live'}
+          </div>
           {error && <p className="text-sm text-rose-400">{error}</p>}
+        </div>
+      </section>
+
+      {/* ── Formula Presets ── */}
+      <section className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-6 shadow-2xl shadow-black/30">
+        <div className="flex items-center gap-2 mb-4">
+          <Target className="h-4 w-4 text-amber-300" />
+          <h3 className="text-sm font-black uppercase tracking-[0.2em] text-white">Scoring Formula</h3>
+          <span className="ml-2 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.15em] text-amber-300">
+            {preset.label} active
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {FORMULA_PRESETS.map((fp) => (
+            <button
+              key={fp.id}
+              onClick={() => setActiveFormula(fp.id)}
+              className={[
+                'rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5',
+                activeFormula === fp.id
+                  ? `${fp.color} ${fp.borderColor} shadow-lg`
+                  : 'bg-black/20 border-white/5 hover:border-white/10',
+              ].join(' ')}
+            >
+              <div className={`mb-2 inline-flex h-7 w-7 items-center justify-center rounded-lg text-[10px] font-black ${activeFormula === fp.id ? fp.color + ' ' + fp.textColor : 'bg-white/5 text-zinc-500'} border ${activeFormula === fp.id ? fp.borderColor : 'border-white/5'}`}>
+                {fp.icon}
+              </div>
+              <p className={`text-xs font-black uppercase tracking-[0.15em] ${activeFormula === fp.id ? fp.textColor : 'text-zinc-300'}`}>
+                {fp.label}
+              </p>
+              <p className="mt-1 text-[10px] leading-4 text-zinc-500 line-clamp-2">{fp.description}</p>
+            </button>
+          ))}
+        </div>
+
+        {/* Active formula weight breakdown */}
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+          {Object.entries(preset.weights).map(([key, w]) => {
+            const labels: Record<string, string> = {
+              trend: 'Trend', momentum: 'Momentum', relativeStrength: 'Rel Str',
+              volume: 'Volume', breakout: 'Breakout', sector: 'Sector', stability: 'Stability',
+            };
+            return (
+              <div key={key} className="rounded-xl border border-white/5 bg-black/20 p-3 text-center">
+                <p className="text-[9px] uppercase tracking-[0.15em] text-zinc-500">{labels[key]}</p>
+                <p className={`mt-1 text-base font-black ${preset.textColor}`}>{(w * 100).toFixed(0)}%</p>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/5">
+                  <div className={`h-full ${preset.color.replace('/15', '/60')}`} style={{ width: `${w * 100}%` }} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
       {/* ── Loading ── */}
       {loading && (
-        <section className="rounded-[2rem] border border-violet-500/10 bg-zinc-950/70 p-6 shadow-2xl shadow-black/20">
+        <section className="rounded-[2rem] border border-violet-500/10 bg-zinc-950/70 p-6">
           <div className="flex items-center gap-3 text-sm text-zinc-300">
             <Activity className="h-4 w-4 animate-spin text-violet-300" />
-            Running 7-factor hedge-fund scoring across {result?.scannedUniverse ?? 'full'} universe · {cycle}-day cycle…
+            Running 7-factor scoring across {result?.scannedUniverse ?? 'full'} universe · {cycle}-day cycle…
           </div>
         </section>
       )}
@@ -224,11 +413,69 @@ const MultibaggerScanner: React.FC = () => {
       {/* ── Main content ── */}
       {!loading && stocks.length > 0 && (
         <>
-          {/* ── Detail panel + context ── */}
-          {selectedStock && (
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.5fr_1fr]">
+          {/* ── Lead Sector + Selected Stock ── */}
+          <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1.6fr]">
 
-              {/* Selected stock — factor breakdown */}
+            {/* Lead Sector Panel */}
+            <div className="space-y-4">
+              {/* Lead sector hero */}
+              {leadSector && (
+                <div className="rounded-[2rem] border border-emerald-500/15 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.12),transparent_60%)] bg-zinc-950/70 p-6 shadow-2xl shadow-black/30">
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Lead Sector</p>
+                  <h3 className="mt-2 text-2xl font-black text-white">{leadSector.sector}</h3>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
+                      <span className="text-xs font-black text-emerald-300">Avg {leadSector.avgScore.toFixed(1)}</span>
+                    </div>
+                    <div className="rounded-xl border border-white/5 bg-black/20 px-3 py-1.5">
+                      <span className="text-xs font-bold text-zinc-400">{leadSector.count} stocks</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {leadSector.leaders.map((sym) => (
+                      <button
+                        key={sym}
+                        onClick={() => setSelectedSymbol(stocks.find((s) => cleanSymbol(s.symbol) === sym)?.symbol ?? null)}
+                        className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-black text-emerald-300 transition hover:bg-emerald-400/20"
+                      >
+                        {sym}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sector leaderboard */}
+              <div className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-5 shadow-2xl shadow-black/30">
+                <h4 className="mb-4 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-white">
+                  <Layers className="h-3.5 w-3.5 text-violet-300" />
+                  Sector Rankings
+                </h4>
+                <div className="space-y-3">
+                  {sectorMap.slice(0, 8).map((sec, idx) => (
+                    <div key={sec.sector} className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-zinc-600">#{idx + 1}</span>
+                          <span className="text-xs font-bold text-zinc-200">{sec.sector}</span>
+                          <span className="text-[10px] text-zinc-600">{sec.count}x</span>
+                        </div>
+                        <span className={`text-xs font-black ${scoreTone(sec.avgScore)}`}>{sec.avgScore.toFixed(1)}</span>
+                      </div>
+                      <ScoreBar score={sec.avgScore} />
+                      <div className="flex flex-wrap gap-1">
+                        {sec.leaders.map((sym) => (
+                          <span key={sym} className="rounded px-1.5 py-0.5 text-[9px] font-bold text-zinc-500 bg-white/5">{sym}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Selected stock detail */}
+            {selectedStock && (
               <div className="rounded-[2rem] border border-violet-500/10 bg-zinc-950/70 p-7 shadow-2xl shadow-black/30">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
@@ -240,7 +487,9 @@ const MultibaggerScanner: React.FC = () => {
                     <p className="text-xs text-zinc-500">{selectedStock.sector}</p>
                   </div>
                   <div className="rounded-2xl border border-violet-500/20 bg-violet-500/10 px-5 py-4 text-right">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Bullish Score</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">
+                      {preset.label} Score
+                    </p>
                     <p className={`text-4xl font-black ${scoreTone(selectedStock.bullishScore)}`}>
                       {selectedStock.bullishScore.toFixed(1)}
                     </p>
@@ -248,15 +497,15 @@ const MultibaggerScanner: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 7-factor bars */}
+                {/* 7-factor bars with active formula weights */}
                 <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <FactorRow label="Trend (MA Alignment)"    score={selectedStock.trendScore} />
-                  <FactorRow label="Momentum (Blended)"      score={selectedStock.momentumScore} />
-                  <FactorRow label="Relative Strength"       score={selectedStock.relativeStrength} />
-                  <FactorRow label="Volume Accumulation"     score={selectedStock.volumeScore} />
-                  <FactorRow label="Breakout Proximity"      score={selectedStock.breakoutScore} />
-                  <FactorRow label="Sector Strength"         score={selectedStock.sectorScore} />
-                  <FactorRow label="Stability (Low Vol)"     score={selectedStock.stabilityScore} />
+                  <FactorRow label="Trend (MA Alignment)"  score={selectedStock.trendScore}       weight={preset.weights.trend} />
+                  <FactorRow label="Momentum (Blended)"    score={selectedStock.momentumScore}     weight={preset.weights.momentum} />
+                  <FactorRow label="Relative Strength"     score={selectedStock.relativeStrength}  weight={preset.weights.relativeStrength} />
+                  <FactorRow label="Volume Accumulation"   score={selectedStock.volumeScore}       weight={preset.weights.volume} />
+                  <FactorRow label="Breakout Proximity"    score={selectedStock.breakoutScore}     weight={preset.weights.breakout} />
+                  <FactorRow label="Sector Strength"       score={selectedStock.sectorScore}       weight={preset.weights.sector} />
+                  <FactorRow label="Stability (Low Vol)"   score={selectedStock.stabilityScore}    weight={preset.weights.stability} />
                 </div>
 
                 {/* Return windows */}
@@ -292,50 +541,8 @@ const MultibaggerScanner: React.FC = () => {
                   </span>
                 </div>
               </div>
-
-              {/* Scoring context + weight breakdown */}
-              <div className="space-y-5">
-                <div className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-6 shadow-2xl shadow-black/30">
-                  <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.2em] text-white">
-                    <Layers className="h-4 w-4 text-violet-300" />
-                    Scoring Context
-                  </h3>
-                  <p className="mt-4 text-sm leading-6 text-zinc-300 rounded-2xl border border-white/5 bg-black/20 p-4">
-                    {CYCLE_CONTEXT[cycle]}
-                  </p>
-                  <div className="mt-4 space-y-2 text-sm">
-                    {[
-                      { label: 'Cycle',     value: `${cycle} Days`,                    tone: 'text-violet-300' },
-                      { label: 'Scanned',   value: `${result?.scannedUniverse ?? '--'} stocks`, tone: 'text-white' },
-                      { label: 'Returned',  value: `${result?.returned ?? '--'} stocks`,        tone: 'text-cyan-300' },
-                      { label: 'Cached at', value: result?.cachedAt ?? '--',            tone: 'text-zinc-400' },
-                    ].map(({ label, value, tone }) => (
-                      <div key={label} className="flex items-center justify-between">
-                        <span className="text-zinc-500">{label}</span>
-                        <span className={`font-bold text-xs ${tone}`}>{value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-6 shadow-2xl shadow-black/30">
-                  <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.2em] text-white">
-                    <Shield className="h-4 w-4 text-amber-300" />
-                    Formula
-                  </h3>
-                  <div className="mt-4 rounded-2xl border border-violet-500/10 bg-violet-500/5 p-4 text-xs leading-6 text-zinc-400 font-mono">
-                    Score = Trend×w₁ + Momentum×w₂<br />
-                    + RS×w₃ + Volume×w₄<br />
-                    + Breakout×w₅ + Sector×w₆<br />
-                    + Stability×w₇
-                  </div>
-                  <p className="mt-3 text-xs leading-5 text-zinc-500">
-                    Showing top ranked stocks based on current criteria. Scores are adaptive — all stocks are ranked, none are rejected.
-                  </p>
-                </div>
-              </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {/* ── Rankings table ── */}
           <section className="rounded-[2rem] border border-white/5 bg-zinc-950/70 shadow-2xl shadow-black/30">
@@ -344,9 +551,14 @@ const MultibaggerScanner: React.FC = () => {
                 <TrendingUp className="h-4 w-4 text-violet-300" />
                 Top 100 Multibagger Candidates
               </h3>
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">
-                {stocks.length} returned · {cycle}-day cycle
-              </span>
+              <div className="flex items-center gap-3">
+                <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.15em] ${preset.borderColor} ${preset.textColor} ${preset.color}`}>
+                  {preset.label}
+                </span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+                  {stocks.length} stocks · {cycle}d cycle
+                </span>
+              </div>
             </div>
 
             <div className="max-h-[52rem] overflow-auto">
@@ -354,20 +566,22 @@ const MultibaggerScanner: React.FC = () => {
                 <thead className="sticky top-0 bg-zinc-950/95 text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">
                   <tr>
                     <th className="px-4 py-4">Rank</th>
+                    <th className="px-3 py-4">Move</th>
                     <th className="px-4 py-4">Symbol</th>
                     <th className="px-4 py-4">Company</th>
                     <th className="px-4 py-4">Sector</th>
-                    <th className="px-4 py-4">Bullish Score</th>
+                    <th className="px-4 py-4">Score</th>
                     <th className="px-4 py-4">Trend</th>
                     <th className="px-4 py-4">Momentum</th>
-                    <th className="px-4 py-4">Rel Strength</th>
+                    <th className="px-4 py-4">RS</th>
                     <th className="px-4 py-4">Volume</th>
-                    <th className="px-4 py-4">Sector Rank</th>
+                    <th className="px-4 py-4">Breakout</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {stocks.map((stock) => {
                     const isSelected = stock.symbol === selectedSymbol;
+                    const delta = (stock as any).rankDelta as number ?? 0;
                     return (
                       <tr
                         key={stock.symbol}
@@ -378,36 +592,37 @@ const MultibaggerScanner: React.FC = () => {
                         ].join(' ')}
                       >
                         <td className="px-4 py-3 font-black text-zinc-500">#{stock.rank}</td>
+                        <td className="px-3 py-3 text-xs font-black">
+                          {delta > 0 ? (
+                            <span className="text-emerald-400">+{delta}</span>
+                          ) : delta < 0 ? (
+                            <span className="text-rose-400">{delta}</span>
+                          ) : (
+                            <span className="text-zinc-700">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 font-bold text-white">{cleanSymbol(stock.symbol)}</td>
-                        <td className="px-4 py-3 text-zinc-300 max-w-[10rem] truncate text-xs">{stock.companyName}</td>
+                        <td className="px-4 py-3 text-zinc-300 max-w-[9rem] truncate text-xs">{stock.companyName}</td>
                         <td className="px-4 py-3 text-zinc-400 text-xs uppercase tracking-[0.12em]">{stock.sector}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <span className={`font-black text-base ${scoreTone(stock.bullishScore)}`}>
                               {stock.bullishScore.toFixed(1)}
                             </span>
-                            <div className="w-14">
+                            <div className="w-12">
                               <ScoreBar score={stock.bullishScore} />
                             </div>
                           </div>
                         </td>
-                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.trendScore)}`}>
-                          {stock.trendScore.toFixed(1)}
-                        </td>
-                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.momentumScore)}`}>
-                          {stock.momentumScore.toFixed(1)}
-                        </td>
-                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.relativeStrength)}`}>
-                          {stock.relativeStrength.toFixed(1)}
-                        </td>
+                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.trendScore)}`}>{stock.trendScore.toFixed(1)}</td>
+                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.momentumScore)}`}>{stock.momentumScore.toFixed(1)}</td>
+                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.relativeStrength)}`}>{stock.relativeStrength.toFixed(1)}</td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center rounded-lg border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] ${volumeBadge(stock.volumeSignal)}`}>
                             {stock.volumeSignal}
                           </span>
                         </td>
-                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.sectorRank)}`}>
-                          {stock.sectorRank.toFixed(1)}
-                        </td>
+                        <td className={`px-4 py-3 font-bold text-xs ${scoreTone(stock.breakoutScore)}`}>{stock.breakoutScore.toFixed(1)}</td>
                       </tr>
                     );
                   })}
@@ -421,6 +636,9 @@ const MultibaggerScanner: React.FC = () => {
             <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.2em] text-white mb-5">
               <Flame className="h-4 w-4 text-rose-300" />
               Momentum Heatmap — Top 18
+              <span className={`ml-2 rounded-lg border px-2 py-0.5 text-[10px] ${preset.borderColor} ${preset.textColor} ${preset.color}`}>
+                {preset.label}
+              </span>
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
               {stocks.slice(0, 18).map((stock) => {
@@ -433,7 +651,7 @@ const MultibaggerScanner: React.FC = () => {
                   <button
                     key={stock.symbol}
                     onClick={() => setSelectedSymbol(stock.symbol)}
-                    className={`rounded-2xl border bg-gradient-to-br p-4 text-left transition hover:-translate-y-0.5 ${tone}`}
+                    className={`rounded-2xl border bg-gradient-to-br p-4 text-left transition hover:-translate-y-0.5 ${tone} ${selectedSymbol === stock.symbol ? 'ring-1 ring-violet-400/40' : ''}`}
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.15em] text-zinc-400">{stock.sector}</p>
                     <h5 className="mt-2 text-lg font-black text-white">{cleanSymbol(stock.symbol)}</h5>
@@ -460,13 +678,25 @@ const MultibaggerScanner: React.FC = () => {
               })}
             </div>
           </section>
+
+          {/* ── Cycle context ── */}
+          <section className="rounded-[2rem] border border-white/5 bg-zinc-950/70 p-5 shadow-2xl shadow-black/30">
+            <div className="flex items-center gap-3">
+              <Shield className="h-4 w-4 text-amber-300 shrink-0" />
+              <p className="text-sm text-zinc-400">{CYCLE_CONTEXT[cycle]}</p>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">Cached at</span>
+                <span className="text-[10px] font-bold text-zinc-400">{result?.cachedAt ?? '--'}</span>
+              </div>
+            </div>
+          </section>
         </>
       )}
 
       {/* ── Fallback ── */}
       {!loading && stocks.length === 0 && !error && (
         <section className="rounded-[2rem] border border-violet-500/10 bg-violet-500/5 p-6 text-sm leading-6 text-zinc-300 shadow-2xl shadow-black/20">
-          Showing top ranked stocks based on current criteria. Scanner is warming up — results will appear shortly.
+          Scanner is warming up — results will appear shortly.
         </section>
       )}
     </div>

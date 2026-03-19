@@ -1,4 +1,4 @@
-import React, { startTransition, useDeferredValue, useEffect, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   Gauge,
   Layers,
   Radar,
+  RefreshCw,
   Shield,
   Sparkles,
   TrendingUp,
@@ -142,12 +143,16 @@ const UltraQuantTab = () => {
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState<UltraQuantDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
 
   const runScan = async (nextFilters?: Filters) => {
     setLoading(true);
     setError(null);
     try {
-      const sanitizedFilters = normalizeFilters(nextFilters ?? filters);
+      const sanitizedFilters = normalizeFilters(nextFilters ?? filtersRef.current);
       const payload = await fetchJson<UltraQuantDashboard>('/api/ultra-quant/dashboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -156,9 +161,10 @@ const UltraQuantTab = () => {
       startTransition(() => {
         setFilters(sanitizedFilters);
         setDashboard(payload);
+        setLastRefreshed(new Date());
       });
     } catch (scanError: any) {
-      setError(scanError.message || 'Unable to run ultra quant scan');
+      setError((scanError as any).message || 'Unable to run ultra quant scan');
     } finally {
       setLoading(false);
     }
@@ -166,6 +172,8 @@ const UltraQuantTab = () => {
 
   useEffect(() => {
     runScan();
+    refreshTimer.current = setInterval(() => runScan(), 1_800_000);
+    return () => { if (refreshTimer.current) clearInterval(refreshTimer.current); };
   }, []);
 
   const results = useDeferredValue(dashboard?.results ?? []);
@@ -267,8 +275,20 @@ const UltraQuantTab = () => {
           >
             Reset Filters
           </button>
+          <button
+            onClick={() => runScan()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-zinc-400 transition hover:border-cyan-400/30 hover:text-white disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
           <div className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">
             Risk per trade: {filters.riskPercentage.toFixed(1)}%
+          </div>
+          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+            <span className={`h-2 w-2 rounded-full ${loading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+            {loading ? 'Refreshing' : lastRefreshed ? `Updated ${lastRefreshed.toLocaleTimeString()}` : 'Live · 30m auto-refresh'}
           </div>
           {error && <div className="text-sm text-rose-400">{error}</div>}
         </div>

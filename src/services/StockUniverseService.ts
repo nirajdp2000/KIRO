@@ -8,6 +8,7 @@ import axios from 'axios';
 
 export interface StockProfile {
   symbol:        string;
+  name:          string;
   exchange:      'NSE' | 'BSE';
   sector:        string;
   industry:      string;
@@ -139,6 +140,7 @@ interface UpstoxInstrument {
   instrument_type: string;
   instrument_key: string;
   trading_symbol: string;
+  name?: string;
   exchange: string;
 }
 
@@ -186,6 +188,7 @@ async function fetchAndParseJson(): Promise<StockProfile[]> {
     const seed = Array.from(symbol).reduce((s, c) => s + c.charCodeAt(0), 0);
     nseMap.set(symbol, {
       symbol,
+      name: inst.name?.trim() || symbol,
       exchange: 'NSE',
       sector,
       industry,
@@ -207,6 +210,7 @@ async function fetchAndParseJson(): Promise<StockProfile[]> {
     const seed = Array.from(symbol).reduce((s, c) => s + c.charCodeAt(0), 0);
     bseMap.set(symbol, {
       symbol,
+      name: inst.name?.trim() || symbol,
       exchange: 'BSE',
       sector,
       industry,

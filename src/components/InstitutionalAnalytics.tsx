@@ -22,6 +22,7 @@ import { fetchJson } from '../lib/api';
 
 interface InstitutionalAnalyticsProps {
   symbol: string;
+  instrumentKey?: string;
   candles: Array<{ close: number; volume: number }>;
   onAnalyze?: () => void;
   theme?: 'dark' | 'light';
@@ -44,6 +45,7 @@ const emptyVolumeProfile = {
 
 export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({
   symbol,
+  instrumentKey,
   candles,
   onAnalyze,
   theme = 'dark',
@@ -94,10 +96,11 @@ export const InstitutionalAnalytics: React.FC<InstitutionalAnalyticsProps> = ({
 
     const loadOrderFlow = async () => {
       try {
+        const ikParam = instrumentKey ? `&instrumentKey=${encodeURIComponent(instrumentKey)}` : '';
         const [book, profile, micro, rotation] = await Promise.all([
-          fetchJson<OrderBook>(`/api/institutional/order-book?lastPrice=${lastPrice}`),
+          fetchJson<OrderBook>(`/api/institutional/order-book?lastPrice=${lastPrice}${ikParam}`),
           InstitutionalService.calculateVolumeProfile(candles, 2),
-          fetchJson<{ frequency: number; spread: number; accumulation: number }>('/api/institutional/microstructure'),
+          fetchJson<{ frequency: number; spread: number; accumulation: number }>(`/api/institutional/microstructure?lastPrice=${lastPrice}${ikParam}`),
           InstitutionalService.getSectorRotation()
         ]);
         const imbalance = await InstitutionalService.calculateOrderImbalance(book);

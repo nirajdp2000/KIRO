@@ -64,7 +64,7 @@ export class UpstoxTokenManager {
       VALUES (?, ?, ?, ?, ?)
     `).run(accessToken, refreshToken, expiresAt, now, now);
 
-    console.log('[UpstoxTokenManager] Tokens stored successfully');
+    console.log(`[UpstoxTokenManager] Tokens stored successfully | expires_at=${new Date(expiresAt).toISOString()} | token_length=${accessToken.length}`);
   }
 
   /**
@@ -98,13 +98,14 @@ export class UpstoxTokenManager {
     try {
       console.log('[UpstoxTokenManager] Refreshing access token...');
       
-      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', {
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-      }, {
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('refresh_token', refreshToken);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+      params.append('redirect_uri', redirectUri);
+
+      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': 'application/json',
@@ -164,6 +165,7 @@ export class UpstoxTokenManager {
     }
 
     // Token is still valid
+    console.log(`[UpstoxTokenManager] Using valid access token (expires in ${Math.round((record.expires_at - Date.now()) / 60000)}m, length=${record.access_token.length})`);
     return record.access_token;
   }
 
@@ -182,13 +184,14 @@ export class UpstoxTokenManager {
     try {
       console.log('[UpstoxTokenManager] Exchanging authorization code...');
       
-      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', {
-        grant_type: 'authorization_code',
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-      }, {
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+      params.append('redirect_uri', redirectUri);
+
+      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': 'application/json',
