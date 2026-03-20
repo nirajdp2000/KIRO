@@ -15,6 +15,7 @@ const ACTION_LOG_FILE = path.join(LOG_DIR, "server-actions.log");
 const ERROR_LOG_FILE = path.join(LOG_DIR, "server-errors.log");
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024;
 const SENSITIVE_KEY_PATTERN = /(authorization|token|api[_-]?key|secret|password|cookie|session)/i;
+const SHOULD_USE_CONSOLE_LOGGING = Boolean(process.env.VERCEL);
 
 type LogContext = Record<string, unknown>;
 
@@ -115,9 +116,34 @@ const summarizeValue = (value: unknown, depth = 0): unknown => {
 };
 
 const writeLogLine = (filePath: string, payload: Record<string, unknown>) => {
-  ensureLogDirectories();
-  rotateIfNeeded(filePath);
-  fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+  const serialized = JSON.stringify(payload);
+
+  if (SHOULD_USE_CONSOLE_LOGGING) {
+    const writer = payload.level === "ERROR" ? console.error : console.log;
+    writer(serialized);
+    return;
+  }
+
+  try {
+    ensureLogDirectories();
+    rotateIfNeeded(filePath);
+    fs.appendFileSync(filePath, `${serialized}\n`, "utf8");
+  } catch (error) {
+    const writer = payload.level === "ERROR" ? console.error : console.log;
+    writer(serialized);
+    writer(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "WARN",
+        event: "logger.file_write_failed",
+        context: {
+          filePath,
+          originalEvent: payload.event,
+        },
+        error: summarizeValue(error),
+      }),
+    );
+  }
 };
 
 export const logAction = (event: string, context: LogContext = {}) => {
