@@ -11,7 +11,7 @@ Add these variables for **Production**:
    - Value: `6c21rv2q18`
 
 3. **UPSTOX_REDIRECT_URI**
-   - Value: `https://nstocks.vercel.app/api/upstox/callback`
+   - Value: `https://nirajstock.vercel.app/api/upstox/callback`
 
 4. **GEMINI_API_KEY**
    - Value: `AIzaSyD1DHKMhttOMNxDKUF2VFFKiOM76GpTnbw`

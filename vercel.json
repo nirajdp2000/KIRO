@@ -18,7 +18,7 @@
     "NODE_ENV": "production",
     "UPSTOX_CLIENT_ID": "7dd0e849-1497-4dac-9b29-0a00ffdd70c8",
     "UPSTOX_CLIENT_SECRET": "6c21rv2q18",
-    "UPSTOX_REDIRECT_URI": "https://nstocks.vercel.app/api/upstox/callback",
+    "UPSTOX_REDIRECT_URI": "https://nirajstock.vercel.app/api/upstox/callback",
     "GEMINI_API_KEY": "AIzaSyD1DHKMhttOMNxDKUF2VFFKiOM76GpTnbw",
     "API_KEY": "AIzaSyD1DHKMhttOMNxDKUF2VFFKiOM76GpTnbw"
   }

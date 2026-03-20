@@ -1577,6 +1577,11 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
   const upstoxService = UpstoxService.getInstance();
   const marketDataService = new UpstoxMarketDataService();
   const getUpstoxCallbackUrl = (req: express.Request) => {
+    const configuredRedirectUri = process.env.UPSTOX_REDIRECT_URI?.trim();
+    if (configuredRedirectUri) {
+      return configuredRedirectUri;
+    }
+
     const forwardedProto = req.header("x-forwarded-proto");
     const forwardedHost = req.header("x-forwarded-host");
     const host = forwardedHost || req.get("host");
