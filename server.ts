@@ -21,9 +21,8 @@ import fs from "fs";
 dotenv.config();
 installProcessErrorHandlers();
 
-async function startServer() {
+async function buildApp() {
   const app = express();
-  const PORT = 3000;
 
   app.use(express.json({ limit: '1mb' }));
   app.use(requestLoggingMiddleware());
@@ -3915,6 +3914,13 @@ Generate stockNews for ALL ${Math.min(15, base.rankings.length)} stocks. Generat
   // Initialize Upstox service (auto-validates token and schedules daily refresh)
   upstoxService.initialize();
 
+  return app;
+}
+
+async function startServer() {
+  const app = await buildApp();
+  const PORT = 3000;
+
   app.listen(PORT, "0.0.0.0", () => {
     logAction("server.started", {
       port: PORT,
@@ -3941,10 +3947,23 @@ Generate stockNews for ALL ${Math.min(15, base.rankings.length)} stocks. Generat
   });
 }
 
-startServer().catch((error) => {
-  logError("server.startup.failed", error);
-  process.exitCode = 1;
-});
+// ── Serverless export for Vercel ──────────────────────────────────────────────
+export async function startServerlessApp() {
+  const app = await buildApp();
+  // Kick off universe load in background (non-blocking)
+  initUniverse().catch(err =>
+    console.warn('[StockUniverseService] Background init failed:', err.message)
+  );
+  return app;
+}
+
+// Only start the HTTP server when running directly (not on Vercel)
+if (!process.env.VERCEL) {
+  startServer().catch((error) => {
+    logError("server.startup.failed", error);
+    process.exitCode = 1;
+  });
+}
 
 
 
