@@ -5,10 +5,10 @@ Go to: https://vercel.com/nirajdp2000s-projects/nstocks/settings/environment-var
 Add these variables for **Production**:
 
 1. **UPSTOX_CLIENT_ID**
-   - Value: `7dd0e849-1497-4dac-9b29-0a00ffdd70c8`
+   - Value: `80af4324-44bf-4bff-9a4d-764536b514e1`
 
 2. **UPSTOX_CLIENT_SECRET**
-   - Value: `6c21rv2q18`
+   - Value: `ilm324qk8m`
 
 3. **UPSTOX_REDIRECT_URI**
    - Value: `https://nirajstock.vercel.app/api/upstox/callback`
