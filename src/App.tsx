@@ -844,62 +844,53 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="border-b border-white/5 bg-black/40 backdrop-blur-xl sticky top-0 z-50 shadow-2xl shadow-black/50">
+      <header className="border-b border-white/[0.06] bg-black/60 backdrop-blur-2xl sticky top-0 z-50 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_32px_rgba(0,0,0,0.6)]">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30 ring-1 ring-white/10">
               <TrendingUp className="text-white w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight leading-none">StockPulse</h1>
-              <p className="text-[10px] text-zinc-500 font-medium uppercase tracking-widest mt-1">Premium Terminal</p>
+              <h1 className="text-lg font-black tracking-tight leading-none bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">StockPulse</h1>
+              <p className="text-[9px] text-indigo-400/60 font-bold uppercase tracking-[0.2em] mt-0.5">Premium Terminal</p>
             </div>
           </div>
           
-          <div className="hidden md:flex items-center gap-8 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-            <button 
-              onClick={() => setActiveTab('analytics')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2", activeTab === 'analytics' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-            >
-              Analytics
-            </button>
-
-            <button 
-              onClick={() => setActiveTab('institutional')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'institutional' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-            >
-              Institutional
-              <span className="absolute -top-1 -right-4 bg-violet-500 text-[8px] text-white px-1 rounded-sm animate-pulse font-bold">PRO</span>
-            </button>
-            <button 
-              onClick={() => setActiveTab('ultraQuant')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'ultraQuant' ? "text-cyan-300 border-cyan-300" : "hover:text-zinc-300 border-transparent")}
-            >
-              Ultra Quant
-              <span className="absolute -top-1 -right-5 bg-cyan-400 text-[8px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">AI</span>
-            </button>
-            <button 
-              onClick={() => setActiveTab('multibagger')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'multibagger' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
-            >
-              Multibagger
-              <span className="absolute -top-1 -right-5 bg-violet-400 text-[8px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">NEW</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('aiIntelligence')}
-              className={cn("transition-colors pb-5 mt-5 border-b-2 relative", activeTab === 'aiIntelligence' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
-            >
-              AI Intelligence
-              <span className="absolute -top-1 -right-3 bg-gradient-to-r from-violet-500 to-cyan-500 text-[8px] text-white px-1 rounded-sm animate-pulse font-bold">AI</span>
-            </button>
-            <a href="#" className="hover:text-zinc-300 transition-colors">Signals</a>
+          <div className="hidden md:flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            {[
+              { id: 'analytics',     label: 'Analytics',      badge: null,  badgeStyle: '' },
+              { id: 'institutional', label: 'Institutional',  badge: 'PRO', badgeStyle: 'bg-violet-500 text-white' },
+              { id: 'ultraQuant',    label: 'Ultra Quant',    badge: 'AI',  badgeStyle: 'bg-cyan-400 text-slate-950' },
+              { id: 'multibagger',   label: 'Multibagger',    badge: 'NEW', badgeStyle: 'bg-violet-400 text-slate-950' },
+              { id: 'aiIntelligence',label: 'AI Intelligence',badge: 'AI',  badgeStyle: 'bg-gradient-to-r from-violet-500 to-cyan-500 text-white' },
+            ].map(({ id, label, badge, badgeStyle }) => (
+              <button key={id}
+                onClick={() => setActiveTab(id as any)}
+                className={cn(
+                  "relative flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all duration-200",
+                  activeTab === id
+                    ? "bg-white/[0.08] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                    : "text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]"
+                )}
+              >
+                {label}
+                {badge && (
+                  <span className={cn("text-[7px] font-black px-1 py-0.5 rounded leading-none", badgeStyle)}>
+                    {badge}
+                  </span>
+                )}
+                {activeTab === id && (
+                  <span className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" />
+                )}
+              </button>
+            ))}
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="hidden sm:flex flex-col items-end">
-              <span className="text-xs font-bold">Premium Account</span>
-              <div className="text-[10px] text-emerald-500 flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live Market
+              <span className="text-xs font-bold text-white/80">Premium Account</span>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" /> Live Market
               </div>
             </div>
             {/* Upstox Connection Button */}
@@ -926,55 +917,41 @@ export default function App() {
             <button
               type="button"
               onClick={() => setDeskTheme((current) => current === 'dark' ? 'light' : 'dark')}
-              className="hidden sm:flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-300 transition hover:border-cyan-400/40 hover:text-white"
+              className="hidden sm:flex h-9 items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
             >
               {deskTheme === 'dark' ? <SunMedium className="w-4 h-4 text-amber-300" /> : <MoonStar className="w-4 h-4 text-cyan-300" />}
               Desk
             </button>
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-zinc-800 to-zinc-700 border border-white/10 flex items-center justify-center">
+            <div className="h-9 w-9 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition cursor-pointer">
               <Maximize2 className="w-4 h-4 text-zinc-400" />
             </div>
           </div>
         </div>
 
         {/* Mobile Navigation Tabs */}
-        <div className="md:hidden flex overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] items-center gap-6 px-4 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-t border-white/5 bg-black/20">
-          <button 
-            onClick={() => setActiveTab('analytics')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2", activeTab === 'analytics' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-          >
-            Analytics
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('institutional')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'institutional' ? "text-indigo-400 border-indigo-400" : "hover:text-zinc-300 border-transparent")}
-          >
-            Institutional
-            <span className="absolute top-1.5 -right-3 bg-violet-500 text-[7px] text-white px-1 rounded-sm animate-pulse font-bold">PRO</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('ultraQuant')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'ultraQuant' ? "text-cyan-300 border-cyan-300" : "hover:text-zinc-300 border-transparent")}
-          >
-            Ultra Quant
-            <span className="absolute top-1.5 -right-3 bg-cyan-400 text-[7px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">AI</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('multibagger')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'multibagger' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
-          >
-            Multibagger
-            <span className="absolute top-1.5 -right-3 bg-violet-400 text-[7px] text-slate-950 px-1 rounded-sm animate-pulse font-bold">NEW</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('aiIntelligence')}
-            className={cn("transition-colors py-3 whitespace-nowrap border-b-2 relative", activeTab === 'aiIntelligence' ? "text-violet-300 border-violet-300" : "hover:text-zinc-300 border-transparent")}
-          >
-            AI Intelligence
-            <span className="absolute top-1.5 -right-3 bg-gradient-to-r from-violet-500 to-cyan-500 text-[7px] text-white px-1 rounded-sm animate-pulse font-bold">AI</span>
-          </button>
-          <a href="#" className="hover:text-zinc-300 transition-colors py-3 whitespace-nowrap">Signals</a>
+        <div className="md:hidden flex overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] items-center gap-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-t border-white/[0.04] bg-black/30">
+          {[
+            { id: 'analytics',     label: 'Analytics',       badge: null,  badgeStyle: '' },
+            { id: 'institutional', label: 'Institutional',   badge: 'PRO', badgeStyle: 'bg-violet-500 text-white' },
+            { id: 'ultraQuant',    label: 'Ultra Quant',     badge: 'AI',  badgeStyle: 'bg-cyan-400 text-slate-950' },
+            { id: 'multibagger',   label: 'Multibagger',     badge: 'NEW', badgeStyle: 'bg-violet-400 text-slate-950' },
+            { id: 'aiIntelligence',label: 'AI Intelligence', badge: 'AI',  badgeStyle: 'bg-gradient-to-r from-violet-500 to-cyan-500 text-white' },
+          ].map(({ id, label, badge, badgeStyle }) => (
+            <button key={id}
+              onClick={() => setActiveTab(id as any)}
+              className={cn(
+                "relative flex items-center gap-1 py-3 px-3 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 flex-shrink-0",
+                activeTab === id ? "text-white border-indigo-400" : "text-zinc-500 border-transparent hover:text-zinc-300"
+              )}
+            >
+              {label}
+              {badge && (
+                <span className={cn("text-[7px] font-black px-1 py-0.5 rounded leading-none", badgeStyle)}>
+                  {badge}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </header>
 

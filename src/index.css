@@ -7,6 +7,26 @@
 
 @layer base {
   body {
-    @apply bg-black text-white;
+    @apply bg-[#080810] text-white;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -10%, rgba(99,102,241,0.08) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 30% at 90% 80%, rgba(139,92,246,0.05) 0%, transparent 60%);
+    background-attachment: fixed;
   }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.25); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.45); }
+
+  * { scroll-behavior: smooth; }
+}
+
+@layer utilities {
+  .glow-indigo { box-shadow: 0 0 20px rgba(99,102,241,0.15), 0 0 40px rgba(99,102,241,0.05); }
+  .glow-emerald { box-shadow: 0 0 20px rgba(16,185,129,0.15), 0 0 40px rgba(16,185,129,0.05); }
+  .glow-rose { box-shadow: 0 0 20px rgba(244,63,94,0.15), 0 0 40px rgba(244,63,94,0.05); }
+  .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); }
+  .nav-tab-active { position: relative; }
+  .nav-tab-active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; border-radius: 2px 2px 0 0; }
 }

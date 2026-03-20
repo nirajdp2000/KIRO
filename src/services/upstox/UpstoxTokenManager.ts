@@ -1,232 +1,168 @@
 /**
- * UpstoxTokenManager — Secure token storage and auto-refresh logic
- * 
- * Responsibilities:
- *   • Store access_token, refresh_token, expires_at in SQLite
- *   • Auto-refresh tokens before expiry
- *   • Provide getValidAccessToken() for API calls
- *   • Handle OAuth flow completion
+ * UpstoxTokenManager — Token storage and auto-refresh logic
+ *
+ * Storage strategy (platform-agnostic):
+ *   • Primary:  SQLite (local dev, Railway, Render — any platform with a writable filesystem)
+ *   • Fallback: In-memory + UPSTOX_ACCESS_TOKEN env var (Vercel serverless, read-only FS)
+ *
+ * better-sqlite3 is imported at the top level but wrapped in try/catch so the module
+ * loads cleanly on Vercel where the native addon is unavailable.
  */
 
-import Database from 'better-sqlite3';
 import axios from 'axios';
 import path from 'path';
-
-const DB_PATH = path.join(process.cwd(), 'upstox-tokens.db');
+import { createRequire } from 'module';
 
 interface TokenRecord {
-  id: number;
   access_token: string;
   refresh_token: string | null;
-  expires_at: number; // Unix timestamp in milliseconds
-  created_at: number;
-  updated_at: number;
+  expires_at: number; // Unix timestamp ms
 }
 
-export class UpstoxTokenManager {
-  private db: Database.Database;
+// ─── SQLite setup (graceful fallback if unavailable) ─────────────────────────
 
-  constructor() {
-    // Initialize SQLite database
-    this.db = new Database(DB_PATH);
-    this.initDatabase();
+type SqliteDB = {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => { run: (...args: any[]) => void; get: () => any };
+};
+
+let db: SqliteDB | null = null;
+
+try {
+  const _require = createRequire(import.meta.url);
+  const Database = _require('better-sqlite3');
+  const dbPath = path.join(process.cwd(), 'upstox-tokens.db');
+  db = new Database(dbPath) as SqliteDB;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS upstox_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  console.log('[UpstoxTokenManager] SQLite storage initialised');
+} catch {
+  console.log('[UpstoxTokenManager] SQLite unavailable, using env/memory storage');
+}
+
+// ─── In-memory fallback ───────────────────────────────────────────────────────
+let memoryToken: TokenRecord | null = null;
+
+function readRecord(): TokenRecord | null {
+  if (db) {
+    const row = db.prepare('SELECT * FROM upstox_tokens ORDER BY id DESC LIMIT 1').get() as any;
+    if (!row) return null;
+    return { access_token: row.access_token, refresh_token: row.refresh_token, expires_at: row.expires_at };
   }
+  return memoryToken;
+}
 
-  /**
-   * Create tokens table if it doesn't exist
-   */
-  private initDatabase(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS upstox_tokens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        access_token TEXT NOT NULL,
-        refresh_token TEXT,
-        expires_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-  }
-
-  /**
-   * Store new tokens after OAuth callback or refresh
-   */
-  storeTokens(accessToken: string, refreshToken: string | null, expiresIn: number): void {
+function writeRecord(r: TokenRecord): void {
+  if (db) {
     const now = Date.now();
-    const expiresAt = now + (expiresIn * 1000); // Convert seconds to milliseconds
+    db.prepare('DELETE FROM upstox_tokens').run();
+    db.prepare(
+      'INSERT INTO upstox_tokens (access_token, refresh_token, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(r.access_token, r.refresh_token, r.expires_at, now, now);
+  } else {
+    memoryToken = r;
+  }
+}
 
-    // Delete old tokens (keep only latest)
-    this.db.prepare('DELETE FROM upstox_tokens').run();
+// ─── Token Manager ────────────────────────────────────────────────────────────
 
-    // Insert new tokens
-    this.db.prepare(`
-      INSERT INTO upstox_tokens (access_token, refresh_token, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(accessToken, refreshToken, expiresAt, now, now);
-
-    console.log(`[UpstoxTokenManager] Tokens stored successfully | expires_at=${new Date(expiresAt).toISOString()} | token_length=${accessToken.length}`);
+export class UpstoxTokenManager {
+  constructor() {
+    // Seed from env var on startup — useful for Vercel where token is set as env var
+    const envToken = process.env.UPSTOX_ACCESS_TOKEN;
+    if (envToken && !readRecord()) {
+      const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // assume 24h
+      writeRecord({ access_token: envToken, refresh_token: null, expires_at: expiresAt });
+    }
   }
 
-  /**
-   * Get stored token record
-   */
-  private getTokenRecord(): TokenRecord | null {
-    const row = this.db.prepare('SELECT * FROM upstox_tokens ORDER BY id DESC LIMIT 1').get();
-    return row as TokenRecord | null;
+  storeTokens(accessToken: string, refreshToken: string | null, expiresIn: number): void {
+    const expiresAt = Date.now() + expiresIn * 1000;
+    writeRecord({ access_token: accessToken, refresh_token: refreshToken, expires_at: expiresAt });
+    console.log(`[UpstoxTokenManager] Tokens stored | expires=${new Date(expiresAt).toISOString()} | len=${accessToken.length}`);
   }
 
-  /**
-   * Check if current token is expired or about to expire (within 5 minutes)
-   */
-  private isTokenExpired(expiresAt: number): boolean {
-    const bufferMs = 5 * 60 * 1000; // 5 minutes buffer
-    return Date.now() >= (expiresAt - bufferMs);
+  private isExpired(expiresAt: number): boolean {
+    return Date.now() >= expiresAt - 5 * 60 * 1000; // 5-min buffer
   }
 
-  /**
-   * Refresh access token using refresh_token
-   */
   private async refreshAccessToken(refreshToken: string): Promise<void> {
-    const clientId = process.env.UPSTOX_CLIENT_ID;
-    const clientSecret = process.env.UPSTOX_CLIENT_SECRET;
-    const redirectUri = process.env.UPSTOX_REDIRECT_URI;
+    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: redirectUri } = process.env;
+    if (!clientId || !clientSecret || !redirectUri) throw new Error('Upstox credentials not configured');
 
-    if (!clientId || !clientSecret || !redirectUri) {
-      throw new Error('Upstox credentials not configured in .env');
-    }
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+    });
 
-    try {
-      console.log('[UpstoxTokenManager] Refreshing access token...');
-      
-      const params = new URLSearchParams();
-      params.append('grant_type', 'refresh_token');
-      params.append('refresh_token', refreshToken);
-      params.append('client_id', clientId);
-      params.append('client_secret', clientSecret);
-      params.append('redirect_uri', redirectUri);
+    const { data } = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    });
 
-      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-      });
-
-      const { access_token, refresh_token: newRefreshToken, expires_in } = response.data;
-      
-      // Validate required fields
-      if (!access_token) {
-        throw new Error('No access_token in refresh response');
-      }
-      
-      // Default to 24 hours if expires_in is not provided
-      const expiresIn = expires_in || 86400; // 24 hours in seconds
-      
-      this.storeTokens(access_token, newRefreshToken || refreshToken, expiresIn);
-
-      console.log('[UpstoxTokenManager] Token refreshed successfully');
-    } catch (error: any) {
-      console.error('[UpstoxTokenManager] Token refresh failed:', error.response?.data || error.message);
-      throw new Error('Failed to refresh Upstox token');
-    }
+    const { access_token, refresh_token: newRefresh, expires_in } = data;
+    if (!access_token) throw new Error('No access_token in refresh response');
+    this.storeTokens(access_token, newRefresh || refreshToken, expires_in || 86400);
+    console.log('[UpstoxTokenManager] Token refreshed successfully');
   }
 
-  /**
-   * Get a valid access token — auto-refreshes if expired
-   * 
-   * Returns null if no tokens stored or refresh fails
-   */
   async getValidAccessToken(): Promise<string | null> {
-    const record = this.getTokenRecord();
-
+    const record = readRecord();
     if (!record) {
-      console.log('[UpstoxTokenManager] No tokens found in database');
+      console.log('[UpstoxTokenManager] No tokens found');
       return null;
     }
-
-    // Check if token is expired
-    if (this.isTokenExpired(record.expires_at)) {
-      console.log('[UpstoxTokenManager] Token expired, attempting refresh...');
-
+    if (this.isExpired(record.expires_at)) {
       if (!record.refresh_token) {
-        console.error('[UpstoxTokenManager] No refresh token available');
+        console.error('[UpstoxTokenManager] Token expired, no refresh token');
         return null;
       }
-
       try {
         await this.refreshAccessToken(record.refresh_token);
-        // Get the newly refreshed token
-        const newRecord = this.getTokenRecord();
-        return newRecord?.access_token || null;
-      } catch (error) {
-        console.error('[UpstoxTokenManager] Auto-refresh failed:', error);
+        return readRecord()?.access_token || null;
+      } catch (e) {
+        console.error('[UpstoxTokenManager] Auto-refresh failed:', e);
         return null;
       }
     }
-
-    // Token is still valid
-    console.log(`[UpstoxTokenManager] Using valid access token (expires in ${Math.round((record.expires_at - Date.now()) / 60000)}m, length=${record.access_token.length})`);
+    const minsLeft = Math.round((record.expires_at - Date.now()) / 60000);
+    console.log(`[UpstoxTokenManager] Using valid access token (expires in ${minsLeft}m, length=${record.access_token.length})`);
     return record.access_token;
   }
 
-  /**
-   * Exchange authorization code for access token (OAuth callback)
-   */
   async exchangeAuthorizationCode(code: string): Promise<void> {
-    const clientId = process.env.UPSTOX_CLIENT_ID;
-    const clientSecret = process.env.UPSTOX_CLIENT_SECRET;
-    const redirectUri = process.env.UPSTOX_REDIRECT_URI;
+    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: redirectUri } = process.env;
+    if (!clientId || !clientSecret || !redirectUri) throw new Error('Upstox credentials not configured');
 
-    if (!clientId || !clientSecret || !redirectUri) {
-      throw new Error('Upstox credentials not configured in .env');
-    }
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+    });
 
-    try {
-      console.log('[UpstoxTokenManager] Exchanging authorization code...');
-      
-      const params = new URLSearchParams();
-      params.append('grant_type', 'authorization_code');
-      params.append('code', code);
-      params.append('client_id', clientId);
-      params.append('client_secret', clientSecret);
-      params.append('redirect_uri', redirectUri);
+    const { data } = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    });
 
-      const response = await axios.post('https://api.upstox.com/v2/login/authorization/token', params, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-      });
-
-      console.log('[UpstoxTokenManager] Response received:', JSON.stringify(response.data, null, 2));
-
-      const { access_token, refresh_token, expires_in } = response.data;
-      
-      // Validate required fields
-      if (!access_token) {
-        throw new Error('No access_token in response');
-      }
-      
-      // Default to 24 hours if expires_in is not provided
-      const expiresIn = expires_in || 86400; // 24 hours in seconds
-      
-      console.log('[UpstoxTokenManager] Storing tokens with expires_in:', expiresIn);
-      
-      this.storeTokens(access_token, refresh_token || null, expiresIn);
-
-      console.log('[UpstoxTokenManager] Authorization code exchanged successfully');
-    } catch (error: any) {
-      const errorDetails = error.response?.data || error.message;
-      console.error('[UpstoxTokenManager] Code exchange failed:', errorDetails);
-      console.error('[UpstoxTokenManager] Full error:', error);
-      throw new Error(`Failed to exchange authorization code: ${JSON.stringify(errorDetails)}`);
-    }
+    const { access_token, refresh_token, expires_in } = data;
+    if (!access_token) throw new Error('No access_token in response');
+    this.storeTokens(access_token, refresh_token || null, expires_in || 86400);
+    console.log('[UpstoxTokenManager] Authorization code exchanged successfully');
   }
 
-  /**
-   * Close database connection
-   */
   close(): void {
-    this.db.close();
+    // no-op — connection managed at module level
   }
 }

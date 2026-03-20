@@ -16,9 +16,19 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
+      port: 5173,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Proxy API calls to Express server in standalone Vite dev mode
+      proxy: {
+        '/api': { target: 'http://localhost:3000', changeOrigin: true },
+        '/upstox': { target: 'http://localhost:3000', changeOrigin: true },
+        '/sb-terminal': { target: 'http://localhost:3000', changeOrigin: true },
+      },
+    },
+    build: {
+      outDir: 'dist',
+      sourcemap: false,
     },
   };
 });

@@ -152,7 +152,7 @@ export default function TerminalLayout(p: TerminalProps) {
     <div className="flex flex-col gap-2">
 
       {/* ── TOP CONTROL BAR ── */}
-      <div className="flex items-center gap-2 flex-wrap bg-[#111114] border border-white/[0.06] rounded-xl px-3 py-2">
+      <div className="flex items-center gap-2 flex-wrap bg-[#0e0e14] border border-white/[0.07] rounded-2xl px-3 py-2 shadow-[0_2px_16px_rgba(0,0,0,0.4)]">
         <div className="w-48 flex-shrink-0" ref={p.searchRef}>
           <AssetSearch
             query={p.query}
@@ -164,12 +164,14 @@ export default function TerminalLayout(p: TerminalProps) {
         <div className="w-px h-5 bg-white/[0.07] flex-shrink-0" />
 
         {/* Timeframe */}
-        <div className="flex items-center gap-0.5 bg-black/40 border border-white/[0.06] rounded-lg p-0.5">
+        <div className="flex items-center gap-0.5 bg-black/50 border border-white/[0.06] rounded-xl p-0.5">
           {TIMEFRAMES.map(tf => (
             <button key={tf.val}
               onClick={() => { p.setInterval(tf.val); if (p.selectedStock) p.fetchData(p.selectedStock, tf.val); }}
-              className={cn('px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all',
-                p.interval === tf.val ? 'bg-indigo-500 text-white shadow-md' : 'text-zinc-600 hover:text-zinc-300')}>
+              className={cn('px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all',
+                p.interval === tf.val
+                  ? 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_8px_rgba(99,102,241,0.4)]'
+                  : 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.04]')}>
               {tf.label}
             </button>
           ))}
@@ -183,18 +185,18 @@ export default function TerminalLayout(p: TerminalProps) {
         ].map(dd => (
           <div key={dd.key} className="relative">
             <button onClick={() => setOpenDropdown(openDropdown === dd.key ? null : dd.key)}
-              className={cn('flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all',
+              className={cn('flex items-center gap-1 px-2.5 py-1 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all',
                 dd.val ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
-                       : 'bg-black/30 border-white/[0.07] text-zinc-500 hover:text-zinc-300')}>
+                       : 'bg-black/30 border-white/[0.07] text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]')}>
               {dd.val ?? dd.label} <ChevronDown className="w-3 h-3" />
             </button>
             {openDropdown === dd.key && (
-              <div className="absolute top-full mt-1 left-0 z-50 bg-[#18181c] border border-white/10 rounded-xl shadow-2xl min-w-[100px] overflow-hidden">
+              <div className="absolute top-full mt-1.5 left-0 z-50 bg-[#14141c] border border-white/[0.1] rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.6)] min-w-[110px] overflow-hidden">
                 <button onClick={() => { dd.set(null); setOpenDropdown(null); }}
-                  className="w-full text-left px-3 py-2 text-[10px] text-zinc-500 hover:bg-white/5 transition-colors">All</button>
+                  className="w-full text-left px-3 py-2 text-[10px] text-zinc-500 hover:bg-white/[0.05] transition-colors">All</button>
                 {dd.opts.map(o => (
                   <button key={o} onClick={() => { dd.set(o); setOpenDropdown(null); }}
-                    className={cn('w-full text-left px-3 py-2 text-[10px] hover:bg-white/5 transition-colors',
+                    className={cn('w-full text-left px-3 py-2 text-[10px] hover:bg-white/[0.05] transition-colors',
                       dd.val === o ? 'text-indigo-300 font-bold' : 'text-zinc-400')}>
                     {o}
                   </button>
@@ -207,13 +209,13 @@ export default function TerminalLayout(p: TerminalProps) {
 
         {/* Presets */}
         {[
-          { label: 'Swing',    icon: 'S', cls: 'text-violet-400 border-violet-500/30 bg-violet-500/10' },
-          { label: 'Breakout', icon: 'B', cls: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' },
-          { label: 'Smart',    icon: 'M', cls: 'text-amber-400 border-amber-500/30 bg-amber-500/10' },
+          { label: 'Swing',    icon: 'S', cls: 'text-violet-400 border-violet-500/30 bg-violet-500/10 shadow-[0_0_12px_rgba(139,92,246,0.15)]' },
+          { label: 'Breakout', icon: 'B', cls: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10 shadow-[0_0_12px_rgba(16,185,129,0.15)]' },
+          { label: 'Smart',    icon: 'M', cls: 'text-amber-400 border-amber-500/30 bg-amber-500/10 shadow-[0_0_12px_rgba(245,158,11,0.15)]' },
         ].map(pr => (
           <button key={pr.label} onClick={() => applyPreset(pr.label)}
-            className={cn('px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider transition-all',
-              activePreset === pr.label ? pr.cls : 'bg-black/30 border-white/[0.07] text-zinc-600 hover:text-zinc-300')}>
+            className={cn('px-2.5 py-1 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all',
+              activePreset === pr.label ? pr.cls : 'bg-black/30 border-white/[0.07] text-zinc-600 hover:text-zinc-300 hover:border-white/[0.12]')}>
             {pr.icon} {pr.label}
           </button>
         ))}
@@ -221,21 +223,21 @@ export default function TerminalLayout(p: TerminalProps) {
 
         {/* SMA overlays */}
         {[
-          { label: 'SMA20', active: p.showSMA20, toggle: () => p.setShowSMA20(!p.showSMA20), on: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' },
-          { label: 'SMA50', active: p.showSMA50, toggle: () => p.setShowSMA50(!p.showSMA50), on: 'bg-orange-500/10 border-orange-500/30 text-orange-400' },
+          { label: 'SMA20', active: p.showSMA20, toggle: () => p.setShowSMA20(!p.showSMA20), on: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.15)]' },
+          { label: 'SMA50', active: p.showSMA50, toggle: () => p.setShowSMA50(!p.showSMA50), on: 'bg-orange-500/10 border-orange-500/30 text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.15)]' },
         ].map(ov => (
           <button key={ov.label} onClick={ov.toggle}
-            className={cn('px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider transition-all',
-              ov.active ? ov.on : 'bg-black/30 border-white/[0.07] text-zinc-600 hover:text-zinc-300')}>
+            className={cn('px-2.5 py-1 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all',
+              ov.active ? ov.on : 'bg-black/30 border-white/[0.07] text-zinc-600 hover:text-zinc-300 hover:border-white/[0.12]')}>
             {ov.label}
           </button>
         ))}
 
         {/* Chart type */}
-        <div className="flex bg-black/40 border border-white/[0.06] rounded-lg p-0.5">
+        <div className="flex bg-black/50 border border-white/[0.06] rounded-xl p-0.5">
           {([{ id: 'candle', Icon: CandlestickChart }, { id: 'area', Icon: TrendingUp }, { id: 'line', Icon: LineChartIcon }, { id: 'bar', Icon: BarChart3 }] as const).map(({ id, Icon }) => (
             <button key={id} onClick={() => p.setChartType(id)}
-              className={cn('p-1.5 rounded-md transition-all', p.chartType === id ? 'bg-indigo-500 text-white' : 'text-zinc-600 hover:text-zinc-300')}>
+              className={cn('p-1.5 rounded-lg transition-all', p.chartType === id ? 'bg-indigo-500 text-white shadow-[0_2px_8px_rgba(99,102,241,0.4)]' : 'text-zinc-600 hover:text-zinc-300')}>
               <Icon className="w-3 h-3" />
             </button>
           ))}
@@ -243,16 +245,16 @@ export default function TerminalLayout(p: TerminalProps) {
 
         {p.data.length > 0 && (
           <button onClick={p.downloadCSV}
-            className="p-1.5 rounded-lg bg-black/30 border border-white/[0.07] text-zinc-600 hover:text-zinc-300 transition-all">
+            className="p-1.5 rounded-xl bg-black/30 border border-white/[0.07] text-zinc-600 hover:text-zinc-300 hover:border-white/[0.12] transition-all">
             <Download className="w-3 h-3" />
           </button>
         )}
       </div>
 
       {/* ── WATCHLIST HORIZONTAL STRIP ── */}
-      <div className="bg-[#111114] border border-white/[0.06] rounded-xl px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <div className="bg-[#0e0e14] border border-white/[0.06] rounded-2xl px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
         <span className="text-[7px] font-black uppercase tracking-[0.2em] text-zinc-600 flex items-center gap-1 flex-shrink-0 mr-1">
-          <Activity className="w-2.5 h-2.5 text-emerald-500" /> Watch
+          <Activity className="w-2.5 h-2.5 text-emerald-400" /> Watch
         </span>
         <div className="w-px h-4 bg-white/[0.07] flex-shrink-0" />
         {allWatchlistItems.map(w => {
@@ -262,8 +264,8 @@ export default function TerminalLayout(p: TerminalProps) {
             <button key={w.key} onClick={() => handleSelect(w)}
               className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-black whitespace-nowrap transition-all flex-shrink-0',
                 sel
-                  ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
-                  : 'bg-black/30 border-white/[0.06] text-zinc-500 hover:text-zinc-200 hover:border-white/[0.12]')}>
+                  ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
+                  : 'bg-black/30 border-white/[0.06] text-zinc-500 hover:text-zinc-200 hover:border-white/[0.15] hover:bg-white/[0.04]')}>
               {sel && isLive && p.livePrice != null ? (
                 <span className={cn('font-mono', p.livePriceFlash === 'up' ? 'text-emerald-300' : p.livePriceFlash === 'down' ? 'text-rose-300' : '')}>
                   {w.symbol} {p.livePrice.toFixed(0)}
@@ -278,15 +280,15 @@ export default function TerminalLayout(p: TerminalProps) {
         })}
         {p.selectedStock && !p.watchlist.some(w => w.key === p.selectedStock!.key) && (
           <button onClick={() => p.addToWatchlist(p.selectedStock!)}
-            className="flex-shrink-0 px-2 py-1 rounded-full border border-dashed border-indigo-500/30 text-[9px] font-black text-indigo-500 hover:bg-indigo-500/10 transition-all">
+            className="flex-shrink-0 px-2 py-1 rounded-full border border-dashed border-indigo-500/30 text-[9px] font-black text-indigo-500 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all">
             + Add
           </button>
         )}
       </div>
 
       {/* ── STOCK HEADER (full width) ── */}
-      <div className={cn('rounded-xl border px-4 py-2.5 flex items-center justify-between flex-shrink-0 transition-all duration-300',
-        isLive ? 'bg-[#0a0f0a] border-emerald-500/15' : 'bg-[#111114] border-white/[0.06]')}>
+      <div className={cn('rounded-2xl border px-4 py-3 flex items-center justify-between flex-shrink-0 transition-all duration-300 shadow-[0_2px_16px_rgba(0,0,0,0.4)]',
+        isLive ? 'bg-gradient-to-r from-[#071209] to-[#0e0e14] border-emerald-500/20' : 'bg-[#0e0e14] border-white/[0.06]')}>
         {p.selectedStock ? (
           <>
             <div className="flex items-center gap-4">
@@ -297,7 +299,7 @@ export default function TerminalLayout(p: TerminalProps) {
                 </div>
                 <div className="flex items-center gap-1.5">
                   {isLive ? (
-                    <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
+                    <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.15)]">
                       <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse inline-block" /> LIVE
                     </span>
                   ) : p.livePriceSource === 'no_auth' ? (
@@ -320,13 +322,13 @@ export default function TerminalLayout(p: TerminalProps) {
               </div>
               <div className="flex items-baseline gap-2">
                 <span className={cn('text-2xl font-black font-mono tracking-tighter leading-none transition-all duration-150',
-                  p.livePriceFlash === 'up' ? 'text-emerald-300 drop-shadow-[0_0_12px_rgba(52,211,153,0.5)]' :
-                  p.livePriceFlash === 'down' ? 'text-rose-300 drop-shadow-[0_0_12px_rgba(248,113,113,0.5)]' :
+                  p.livePriceFlash === 'up' ? 'text-emerald-300 drop-shadow-[0_0_16px_rgba(52,211,153,0.6)]' :
+                  p.livePriceFlash === 'down' ? 'text-rose-300 drop-shadow-[0_0_16px_rgba(248,113,113,0.6)]' :
                   isLive ? 'text-white' : 'text-zinc-500')}>
                   {displayPrice != null ? `\u20B9${displayPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '\u2014'}
                 </span>
                 {isLive && p.livePriceChangePercent != null && (
-                  <span className={cn('text-sm font-black font-mono', p.livePriceChangePercent >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                  <span className={cn('text-sm font-black font-mono px-2 py-0.5 rounded-lg', p.livePriceChangePercent >= 0 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10')}>
                     {p.livePriceChangePercent >= 0 ? '+' : ''}{p.livePriceChangePercent.toFixed(2)}%
                   </span>
                 )}
@@ -342,15 +344,15 @@ export default function TerminalLayout(p: TerminalProps) {
                 { label: 'Vol',   value: p.data.length > 0 ? (p.data[p.data.length-1].volume > 1e6 ? `${(p.data[p.data.length-1].volume/1e6).toFixed(1)}M` : p.data[p.data.length-1].volume.toLocaleString()) : '\u2014', color: 'text-indigo-400' },
                 { label: 'Trend', value: p.mdSentiment ? (isBullishStatus(p.mdSentiment.status) ? 'Bull' : 'Bear') : '\u2014', color: p.mdSentiment ? (isBullishStatus(p.mdSentiment.status) ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-600' },
               ].map(m => (
-                <div key={m.label} className="bg-black/30 rounded-lg px-2 py-1 border border-white/[0.05] text-center">
+                <div key={m.label} className="bg-black/40 rounded-xl px-2.5 py-1.5 border border-white/[0.06] text-center hover:border-white/[0.1] transition-colors">
                   <p className="text-[7px] font-bold text-zinc-600 uppercase">{m.label}</p>
                   <p className={cn('text-[10px] font-black font-mono', m.color)}>{m.value}</p>
                 </div>
               ))}
               {p.aiRecommendation && (
-                <div className={cn('px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest',
-                  p.aiRecommendation === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' :
-                  p.aiRecommendation === 'SELL' ? 'bg-rose-500/10 text-rose-400 border-rose-500/25' :
+                <div className={cn('px-2.5 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest',
+                  p.aiRecommendation === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.15)]' :
+                  p.aiRecommendation === 'SELL' ? 'bg-rose-500/10 text-rose-400 border-rose-500/25 shadow-[0_0_12px_rgba(244,63,94,0.15)]' :
                   'bg-zinc-700/40 text-zinc-400 border-zinc-600/25')}>
                   {p.aiRecommendation}
                 </div>
@@ -359,8 +361,8 @@ export default function TerminalLayout(p: TerminalProps) {
           </>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/15 flex items-center justify-center">
-              <TrendingUp className="w-3.5 h-3.5 text-indigo-500/50" />
+            <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/15 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-indigo-500/50" />
             </div>
             <div>
               <p className="text-sm font-bold text-zinc-400">Select an instrument</p>
@@ -371,8 +373,8 @@ export default function TerminalLayout(p: TerminalProps) {
       </div>
 
       {/* ── MARKET DYNAMICS STRIP (full width) ── */}
-      <div className={cn('rounded-lg border bg-[#0d0d10] flex-shrink-0 transition-all duration-300',
-        p.mdFlash ? 'border-indigo-500/15' : 'border-white/[0.05]')}>
+      <div className={cn('rounded-2xl border bg-[#0a0a10] flex-shrink-0 transition-all duration-300 overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.3)]',
+        p.mdFlash ? 'border-indigo-500/20' : 'border-white/[0.05]')}>
         <div className="flex items-stretch divide-x divide-white/[0.05]">
           {[
             { label: 'Mood', value: p.mdSentiment ? (isBullishStatus(p.mdSentiment.status) ? 'Bull' : 'Bear') : '\u2014', color: p.mdSentiment ? (isBullishStatus(p.mdSentiment.status) ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-700' },
@@ -380,30 +382,30 @@ export default function TerminalLayout(p: TerminalProps) {
             { label: 'Conf', value: p.mdSentiment ? `${p.mdSentiment.confidence}%` : '\u2014', color: 'text-indigo-400' },
             { label: 'Vol',  value: p.mdSentiment?.volatility ?? '\u2014', color: p.mdSentiment?.volatility === 'Low' ? 'text-emerald-400' : p.mdSentiment?.volatility === 'High' ? 'text-rose-400' : 'text-amber-400' },
           ].map(item => (
-            <div key={item.label} className="flex-1 px-3 py-1.5 min-w-0">
+            <div key={item.label} className="flex-1 px-3 py-2 min-w-0">
               <p className="text-[7px] font-bold text-zinc-700 uppercase tracking-widest">{item.label}</p>
-              <p className={cn('text-[10px] font-black', item.color)}>{item.value}</p>
+              <p className={cn('text-[11px] font-black', item.color)}>{item.value}</p>
             </div>
           ))}
           {p.mdSectors.length > 0 && (
-            <div className="flex-1 px-3 py-1.5 min-w-0 hidden sm:block">
+            <div className="flex-1 px-3 py-2 min-w-0 hidden sm:block">
               <p className="text-[7px] font-bold text-zinc-700 uppercase tracking-widest">Top Sector</p>
-              <p className={cn('text-[10px] font-black truncate', Number(p.mdSectors[0]?.return) >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+              <p className={cn('text-[11px] font-black truncate', Number(p.mdSectors[0]?.return) >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
                 {p.mdSectors[0]?.name}
               </p>
             </div>
           )}
-          <div className="px-3 py-1.5 flex items-center">
-            <span className={cn('w-1.5 h-1.5 rounded-full', p.mdFlash ? 'bg-indigo-400' : p.mdLastUpdated ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-700')} />
+          <div className="px-3 py-2 flex items-center">
+            <span className={cn('w-1.5 h-1.5 rounded-full', p.mdFlash ? 'bg-indigo-400 shadow-[0_0_6px_rgba(99,102,241,0.8)]' : p.mdLastUpdated ? 'bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.6)]' : 'bg-zinc-700')} />
           </div>
         </div>
         {p.mdSectors.length > 0 && (
-          <div className="border-t border-white/[0.04] px-2 py-1 flex gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden">
+          <div className="border-t border-white/[0.04] px-2 py-1.5 flex gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden">
             {p.mdSectors.slice(0, 12).map((s: any) => {
               const ret = Number(s.return ?? 0);
               return (
-                <div key={s.name} className={cn('flex-shrink-0 px-1.5 py-0.5 rounded border text-center min-w-[44px]',
-                  ret >= 0 ? 'bg-emerald-500/5 border-emerald-500/10' : 'bg-rose-500/5 border-rose-500/10')}>
+                <div key={s.name} className={cn('flex-shrink-0 px-2 py-1 rounded-xl border text-center min-w-[48px] transition-all',
+                  ret >= 0 ? 'bg-emerald-500/[0.06] border-emerald-500/[0.12] hover:bg-emerald-500/10' : 'bg-rose-500/[0.06] border-rose-500/[0.12] hover:bg-rose-500/10')}>
                   <p className="text-[6px] font-bold text-zinc-700 uppercase whitespace-nowrap">{s.name}</p>
                   <p className={cn('text-[8px] font-black font-mono', ret >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
                     {ret >= 0 ? '+' : ''}{ret.toFixed(1)}%
@@ -416,7 +418,7 @@ export default function TerminalLayout(p: TerminalProps) {
       </div>
 
       {/* ── FULL-WIDTH CHART ── */}
-      <div className="bg-[#111114] rounded-xl border border-white/[0.06] overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 26rem)', minHeight: '420px' }}>
+      <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] overflow-hidden flex flex-col shadow-[0_4px_24px_rgba(0,0,0,0.5)]" style={{ height: 'calc(100vh - 26rem)', minHeight: '420px' }}>
         {p.loading && (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <div className="relative">
@@ -528,15 +530,15 @@ export default function TerminalLayout(p: TerminalProps) {
       <div className="grid grid-cols-6 gap-2">
 
         {/* AI Signal */}
-        <div className={cn('bg-[#111114] rounded-xl border p-3 flex flex-col gap-2 transition-all duration-500',
-          p.aiRecommendation === 'BUY' ? 'border-emerald-500/20' :
-          p.aiRecommendation === 'SELL' ? 'border-rose-500/20' : 'border-white/[0.06]')}>
+        <div className={cn('bg-[#0e0e14] rounded-2xl border p-3 flex flex-col gap-2 transition-all duration-500 shadow-[0_2px_12px_rgba(0,0,0,0.3)]',
+          p.aiRecommendation === 'BUY' ? 'border-emerald-500/25 shadow-[0_0_20px_rgba(16,185,129,0.08)]' :
+          p.aiRecommendation === 'SELL' ? 'border-rose-500/25 shadow-[0_0_20px_rgba(244,63,94,0.08)]' : 'border-white/[0.06]')}>
           <div className="flex items-center justify-between">
             <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600 flex items-center gap-1">
               <Brain className="w-2.5 h-2.5 text-indigo-400" /> AI Signal
             </span>
             {p.aiRecommendation ? (
-              <span className={cn('text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest',
+              <span className={cn('text-[8px] font-black px-1.5 py-0.5 rounded-lg border uppercase tracking-widest',
                 p.aiRecommendation === 'BUY' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25' :
                 p.aiRecommendation === 'SELL' ? 'bg-rose-500/15 text-rose-400 border-rose-500/25' :
                 'bg-zinc-700/40 text-zinc-400 border-zinc-600/25')}>
@@ -550,16 +552,16 @@ export default function TerminalLayout(p: TerminalProps) {
                 <span className="text-[7px] font-bold text-zinc-700 uppercase">Conf</span>
                 <span className="text-[8px] font-mono text-zinc-400">{p.aiConfidence}%</span>
               </div>
-              <div className="w-full h-0.5 bg-black/50 rounded-full overflow-hidden">
+              <div className="w-full h-1 bg-black/50 rounded-full overflow-hidden">
                 <div className={cn('h-full rounded-full transition-all duration-700',
-                  p.aiConfidence > 70 ? 'bg-emerald-500' : p.aiConfidence > 40 ? 'bg-yellow-500' : 'bg-rose-500')}
+                  p.aiConfidence > 70 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : p.aiConfidence > 40 ? 'bg-gradient-to-r from-yellow-600 to-yellow-400' : 'bg-gradient-to-r from-rose-600 to-rose-400')}
                   style={{ width: `${p.aiConfidence}%` }} />
               </div>
             </div>
           )}
           {p.selectedStock && (
             <button onClick={p.runAiAnalysis} disabled={p.aiLoading}
-              className="mt-auto w-full py-1 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-lg text-[7px] font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center justify-center gap-1">
+              className="mt-auto w-full py-1 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 rounded-xl text-[7px] font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center justify-center gap-1">
               {p.aiLoading ? <Loader2 className="w-2 h-2 animate-spin" /> : <Brain className="w-2 h-2" />}
               {p.aiLoading ? 'Analyzing...' : 'Run Audit'}
             </button>
@@ -567,33 +569,33 @@ export default function TerminalLayout(p: TerminalProps) {
         </div>
 
         {/* Fear/Greed */}
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-3 flex flex-col gap-2">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-3 flex flex-col gap-2 shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
           <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600">Fear / Greed</span>
-          <div className="bg-black/30 rounded-lg p-2 border border-white/[0.05] flex-1 flex flex-col justify-center">
+          <div className="bg-black/30 rounded-xl p-2 border border-white/[0.05] flex-1 flex flex-col justify-center">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[7px] font-bold text-rose-400 uppercase">Fear</span>
               <span className="text-[11px] font-black font-mono text-white">{p.aiInsights?.psychology?.fearGreedIndex ?? 50}</span>
               <span className="text-[7px] font-bold text-emerald-400 uppercase">Greed</span>
             </div>
             <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-rose-500 via-yellow-400 to-emerald-500 opacity-40 rounded-full" />
-              <div className="absolute top-0 bottom-0 w-1.5 bg-white rounded-full shadow-[0_0_6px_rgba(255,255,255,0.7)] transition-all duration-700"
+              <div className="absolute inset-0 bg-gradient-to-r from-rose-500 via-yellow-400 to-emerald-500 opacity-50 rounded-full" />
+              <div className="absolute top-0 bottom-0 w-1.5 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.8)] transition-all duration-700"
                 style={{ left: `calc(${p.aiInsights?.psychology?.fearGreedIndex ?? 50}% - 3px)` }} />
             </div>
           </div>
         </div>
 
         {/* Momentum */}
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-3 flex flex-col gap-1.5">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-3 flex flex-col gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
           <div className="flex items-center justify-between">
             <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600">Momentum</span>
             <span className="flex items-center gap-1 text-[6px] font-black text-emerald-500">
-              <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse inline-block" /> LIVE
+              <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse inline-block shadow-[0_0_4px_rgba(16,185,129,0.8)]" /> LIVE
             </span>
           </div>
           <div className="space-y-0.5 flex-1 overflow-hidden">
             {p.quantData?.momentum?.slice(0, 3).map((m: any, i: number) => (
-              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-lg bg-black/20 border border-white/[0.04]">
+              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-xl bg-black/20 border border-white/[0.04] hover:border-emerald-500/10 transition-colors">
                 <span className="text-[9px] font-black text-white truncate">{cleanSymbol(m.symbol)}</span>
                 <span className="text-[8px] font-mono font-black text-emerald-400 flex-shrink-0 ml-1">+{m.priceChange}%</span>
               </div>
@@ -605,14 +607,14 @@ export default function TerminalLayout(p: TerminalProps) {
         </div>
 
         {/* Breakouts */}
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-3 flex flex-col gap-1.5">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-3 flex flex-col gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
           <div className="flex items-center justify-between">
             <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600">Breakouts</span>
-            <span className="text-[6px] font-black text-indigo-500">DETECTED</span>
+            <span className="text-[6px] font-black text-indigo-400">DETECTED</span>
           </div>
           <div className="space-y-0.5 flex-1 overflow-hidden">
             {p.quantData?.breakouts?.slice(0, 3).map((b: any, i: number) => (
-              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-lg bg-black/20 border border-white/[0.04]">
+              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-xl bg-black/20 border border-white/[0.04] hover:border-indigo-500/10 transition-colors">
                 <span className="text-[9px] font-black text-white truncate">{cleanSymbol(b.symbol)}</span>
                 <span className="text-[8px] font-black text-indigo-400 flex-shrink-0 ml-1">{b.strength}</span>
               </div>
@@ -624,19 +626,19 @@ export default function TerminalLayout(p: TerminalProps) {
         </div>
 
         {/* Sectors */}
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-3 flex flex-col gap-1.5">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-3 flex flex-col gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
           <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600">Sectors</span>
           <div className="space-y-0.5 flex-1 overflow-hidden">
             {p.mdSectors.length > 0 ? (
               <>
                 {[...p.mdSectors].sort((a,b) => Number(b.return)-Number(a.return)).slice(0,2).map((s:any) => (
-                  <div key={s.name} className="flex items-center justify-between px-1.5 py-1 rounded-lg bg-emerald-500/[0.04] border border-emerald-500/[0.08]">
+                  <div key={s.name} className="flex items-center justify-between px-1.5 py-1 rounded-xl bg-emerald-500/[0.05] border border-emerald-500/[0.1] hover:bg-emerald-500/[0.08] transition-colors">
                     <span className="text-[8px] font-bold text-zinc-500 truncate">{s.name}</span>
                     <span className="text-[8px] font-black font-mono text-emerald-400 ml-1 flex-shrink-0">+{Number(s.return).toFixed(1)}%</span>
                   </div>
                 ))}
                 {[...p.mdSectors].sort((a,b) => Number(a.return)-Number(b.return)).slice(0,1).map((s:any) => (
-                  <div key={s.name+'-l'} className="flex items-center justify-between px-1.5 py-1 rounded-lg bg-rose-500/[0.04] border border-rose-500/[0.08]">
+                  <div key={s.name+'-l'} className="flex items-center justify-between px-1.5 py-1 rounded-xl bg-rose-500/[0.05] border border-rose-500/[0.1] hover:bg-rose-500/[0.08] transition-colors">
                     <span className="text-[8px] font-bold text-zinc-500 truncate">{s.name}</span>
                     <span className="text-[8px] font-black font-mono text-rose-400 ml-1 flex-shrink-0">{Number(s.return).toFixed(1)}%</span>
                   </div>
@@ -649,14 +651,14 @@ export default function TerminalLayout(p: TerminalProps) {
         </div>
 
         {/* Vol Surge */}
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-3 flex flex-col gap-1.5">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-3 flex flex-col gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.3)]">
           <div className="flex items-center justify-between">
             <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600">Vol Surge</span>
-            <span className="text-[6px] font-black text-orange-500">ALERT</span>
+            <span className="text-[6px] font-black text-orange-400">ALERT</span>
           </div>
           <div className="space-y-0.5 flex-1 overflow-hidden">
             {p.quantData?.surges?.slice(0,3).map((s:any, i:number) => (
-              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-lg bg-black/20 border border-white/[0.04]">
+              <div key={i} className="flex items-center justify-between px-1.5 py-1 rounded-xl bg-black/20 border border-white/[0.04] hover:border-orange-500/10 transition-colors">
                 <span className="text-[9px] font-black text-white truncate">{cleanSymbol(s.symbol)}</span>
                 <span className="text-[8px] font-black font-mono text-orange-400 flex-shrink-0 ml-1">{s.ratio}x</span>
               </div>
@@ -671,26 +673,30 @@ export default function TerminalLayout(p: TerminalProps) {
 
       {/* ── AI ANALYSIS (full width below) ── */}
       {chartData.length > 0 && (
-        <div className="bg-[#111114] rounded-xl border border-white/[0.06] p-5">
+        <div className="bg-[#0e0e14] rounded-2xl border border-white/[0.06] p-5 shadow-[0_2px_16px_rgba(0,0,0,0.4)]">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
-              <h3 className="text-sm font-bold text-white">Smart AI Analysis</h3>
+              <div className="w-7 h-7 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              </div>
+              <h3 className="text-sm font-black text-white">Smart AI Analysis</h3>
               {p.aiLastUpdated && <span className="text-[8px] font-mono text-zinc-600">updated {p.aiLastUpdated}</span>}
             </div>
             <button onClick={p.runAiAnalysis} disabled={p.aiLoading}
-              className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-400 disabled:bg-zinc-800 text-white px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all">
+              className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:from-zinc-800 disabled:to-zinc-800 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-[0_2px_12px_rgba(99,102,241,0.3)] disabled:shadow-none">
               {p.aiLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Brain className="w-3 h-3" />}
               {p.aiLoading ? 'Analyzing...' : 'Full Audit'}
             </button>
           </div>
           {p.aiAnalysis ? (
-            <div className="prose prose-invert max-w-none bg-black/30 rounded-xl p-5 border border-white/[0.05] text-sm">
+            <div className="prose prose-invert max-w-none bg-black/30 rounded-2xl p-5 border border-white/[0.05] text-sm">
               <Markdown>{p.aiAnalysis}</Markdown>
             </div>
           ) : (
-            <div className="bg-black/20 rounded-xl p-8 border border-dashed border-white/[0.06] flex flex-col items-center justify-center text-center gap-3">
-              <Brain className="w-8 h-8 text-indigo-500/30" />
+            <div className="bg-black/20 rounded-2xl p-8 border border-dashed border-white/[0.06] flex flex-col items-center justify-center text-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 flex items-center justify-center">
+                <Brain className="w-6 h-6 text-indigo-500/30" />
+              </div>
               <p className="text-xs font-bold text-zinc-500">AI Engine Ready — click Full Audit to analyze</p>
             </div>
           )}
