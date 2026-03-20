@@ -3936,13 +3936,13 @@ async function startServer() {
   // Graceful shutdown handler
   process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully...');
-    upstoxService.shutdown();
+    UpstoxService.getInstance().shutdown();
     process.exit(0);
   });
 
   process.on('SIGINT', () => {
     console.log('SIGINT received, shutting down gracefully...');
-    upstoxService.shutdown();
+    UpstoxService.getInstance().shutdown();
     process.exit(0);
   });
 }
