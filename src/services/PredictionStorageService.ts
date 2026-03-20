@@ -41,39 +41,43 @@ let db: SqliteDB | null = null;
 const JSON_STORE_PATH = path.join(process.cwd(), 'predictions-store.json');
 
 // Initialize SQLite or fallback to JSON
-try {
-  const _require = createRequire(import.meta.url);
-  const Database = _require('better-sqlite3');
-  const dbPath = path.join(process.cwd(), 'predictions.db');
-  db = new Database(dbPath) as SqliteDB;
-  
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS predictions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      stock_symbol TEXT NOT NULL,
-      prediction_date TEXT NOT NULL,
-      target_date TEXT NOT NULL,
-      prediction TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      predicted_price REAL NOT NULL,
-      actual_price REAL,
-      actual_change REAL,
-      accuracy REAL,
-      signals TEXT NOT NULL,
-      explanation TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `);
-  
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_target_date ON predictions(target_date)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_symbol ON predictions(stock_symbol)`);
-  
-  console.log('[PredictionStorage] SQLite storage initialized');
-} catch {
-  console.log('[PredictionStorage] Using JSON file storage');
-  if (!fs.existsSync(JSON_STORE_PATH)) {
-    fs.writeFileSync(JSON_STORE_PATH, JSON.stringify([]));
+if (!process.env.VERCEL) {
+  try {
+    const _require = createRequire(import.meta.url);
+    const Database = _require('better-sqlite3');
+    const dbPath = path.join(process.cwd(), 'predictions.db');
+    db = new Database(dbPath) as SqliteDB;
+    
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stock_symbol TEXT NOT NULL,
+        prediction_date TEXT NOT NULL,
+        target_date TEXT NOT NULL,
+        prediction TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        predicted_price REAL NOT NULL,
+        actual_price REAL,
+        actual_change REAL,
+        accuracy REAL,
+        signals TEXT NOT NULL,
+        explanation TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_target_date ON predictions(target_date)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_symbol ON predictions(stock_symbol)`);
+    
+    console.log('[PredictionStorage] SQLite storage initialized');
+  } catch {
+    console.log('[PredictionStorage] Using JSON file storage');
+    if (!fs.existsSync(JSON_STORE_PATH)) {
+      fs.writeFileSync(JSON_STORE_PATH, JSON.stringify([]));
+    }
   }
+} else {
+  console.log('[PredictionStorage] Vercel environment — using in-memory storage');
 }
 
 export class PredictionStorageService {

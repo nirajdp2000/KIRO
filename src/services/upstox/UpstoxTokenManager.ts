@@ -28,24 +28,28 @@ type SqliteDB = {
 
 let db: SqliteDB | null = null;
 
-try {
-  const _require = createRequire(import.meta.url);
-  const Database = _require('better-sqlite3');
-  const dbPath = path.join(process.cwd(), 'upstox-tokens.db');
-  db = new Database(dbPath) as SqliteDB;
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS upstox_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      access_token TEXT NOT NULL,
-      refresh_token TEXT,
-      expires_at INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `);
-  console.log('[UpstoxTokenManager] SQLite storage initialised');
-} catch {
-  console.log('[UpstoxTokenManager] SQLite unavailable, using env/memory storage');
+if (!process.env.VERCEL) {
+  try {
+    const _require = createRequire(import.meta.url);
+    const Database = _require('better-sqlite3');
+    const dbPath = path.join(process.cwd(), 'upstox-tokens.db');
+    db = new Database(dbPath) as SqliteDB;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS upstox_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    console.log('[UpstoxTokenManager] SQLite storage initialised');
+  } catch {
+    console.log('[UpstoxTokenManager] SQLite unavailable, using env/memory storage');
+  }
+} else {
+  console.log('[UpstoxTokenManager] Vercel environment — using env/memory storage');
 }
 
 // ─── In-memory fallback ───────────────────────────────────────────────────────
