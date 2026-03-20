@@ -38,16 +38,21 @@ type SqliteDB = {
 };
 
 let db: SqliteDB | null = null;
+let dbInitialized = false;
 const JSON_STORE_PATH = path.join(process.cwd(), 'predictions-store.json');
 
-// Initialize SQLite or fallback to JSON
-if (!process.env.VERCEL) {
+function getDb(): SqliteDB | null {
+  if (dbInitialized) return db;
+  dbInitialized = true;
+  if (process.env.VERCEL) {
+    console.log('[PredictionStorage] Vercel environment — using in-memory storage');
+    return null;
+  }
   try {
     const _require = createRequire(import.meta.url);
     const Database = _require('better-sqlite3');
     const dbPath = path.join(process.cwd(), 'predictions.db');
     db = new Database(dbPath) as SqliteDB;
-    
     db.exec(`
       CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,10 +70,8 @@ if (!process.env.VERCEL) {
         created_at INTEGER NOT NULL
       )
     `);
-    
     db.exec(`CREATE INDEX IF NOT EXISTS idx_target_date ON predictions(target_date)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_symbol ON predictions(stock_symbol)`);
-    
     console.log('[PredictionStorage] SQLite storage initialized');
   } catch {
     console.log('[PredictionStorage] Using JSON file storage');
@@ -76,15 +79,14 @@ if (!process.env.VERCEL) {
       fs.writeFileSync(JSON_STORE_PATH, JSON.stringify([]));
     }
   }
-} else {
-  console.log('[PredictionStorage] Vercel environment — using in-memory storage');
+  return db;
 }
 
 export class PredictionStorageService {
   
   static savePrediction(pred: StockPrediction): void {
     const now = Date.now();
-    
+    const db = getDb();
     if (db) {
       db.prepare(`
         INSERT INTO predictions (
@@ -110,6 +112,7 @@ export class PredictionStorageService {
   }
   
   static getPredictionsByDate(targetDate: string): StockPrediction[] {
+    const db = getDb();
     if (db) {
       const rows = db.prepare('SELECT * FROM predictions WHERE target_date = ? ORDER BY confidence DESC').all(targetDate);
       return rows.map((r: any) => ({
@@ -123,6 +126,7 @@ export class PredictionStorageService {
   }
   
   static updateActualPrice(id: number, actualPrice: number, actualChange: number): void {
+    const db = getDb();
     if (db) {
       const pred = db.prepare('SELECT * FROM predictions WHERE id = ?').get(id) as any;
       if (!pred) return;
@@ -158,7 +162,7 @@ export class PredictionStorageService {
     avgConfidence: number;
   } {
     let predictions: StockPrediction[] = [];
-    
+    const db = getDb();
     if (db) {
       let query = 'SELECT * FROM predictions WHERE accuracy IS NOT NULL';
       const params: any[] = [];
@@ -199,6 +203,7 @@ export class PredictionStorageService {
   }
   
   static getAllDatesWithPredictions(): string[] {
+    const db = getDb();
     if (db) {
       const rows = db.prepare('SELECT DISTINCT target_date FROM predictions ORDER BY target_date DESC').all();
       return rows.map((r: any) => r.target_date);

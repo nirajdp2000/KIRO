@@ -14,16 +14,39 @@ process.env.VERCEL = '1';
 process.env.NODE_ENV = 'production';
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import { createRequire } from 'module';
+import fs from 'fs';
+import path from 'path';
 
 type AppHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
 let appPromise: Promise<AppHandler> | null = null;
+const require = createRequire(path.join(process.cwd(), 'api', 'index.js'));
+
+function resolveServerBundlePath(): string {
+  const candidates = [
+    path.join(process.cwd(), 'server.cjs'),
+    path.join(process.cwd(), '.vercel', 'output', 'functions', 'api', 'index.func', 'server.cjs'),
+    path.join(process.cwd(), '..', 'server.cjs'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to locate server bundle for Vercel. Checked: ${candidates.join(', ')}`);
+}
 
 function getApp(): Promise<AppHandler> {
   if (!appPromise) {
-    appPromise = import('../server.js').then((mod) =>
-      mod.startServerlessApp() as Promise<AppHandler>
-    );
+    appPromise = Promise.resolve().then(() => {
+      const mod = require(resolveServerBundlePath()) as {
+        startServerlessApp: () => Promise<AppHandler>;
+      };
+      return mod.startServerlessApp();
+    });
   }
   return appPromise;
 }

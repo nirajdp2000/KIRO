@@ -45,9 +45,9 @@ export class UpstoxService {
   /**
    * Generate OAuth authorization URL for user login
    */
-  getAuthorizationUrl(): string {
+  getAuthorizationUrl(redirectUriOverride?: string): string {
     const clientId = process.env.UPSTOX_CLIENT_ID;
-    const redirectUri = process.env.UPSTOX_REDIRECT_URI;
+    const redirectUri = redirectUriOverride || process.env.UPSTOX_REDIRECT_URI;
 
     if (!clientId || !redirectUri) {
       throw new Error('Upstox credentials not configured in .env');
@@ -59,8 +59,8 @@ export class UpstoxService {
   /**
    * Handle OAuth callback (exchange code for tokens)
    */
-  async handleOAuthCallback(code: string): Promise<void> {
-    await this.tokenManager.exchangeAuthorizationCode(code);
+  async handleOAuthCallback(code: string, redirectUriOverride?: string): Promise<void> {
+    await this.tokenManager.exchangeAuthorizationCode(code, redirectUriOverride);
   }
 
   /**

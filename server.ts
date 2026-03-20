@@ -1,7 +1,6 @@
 ﻿import express from "express";
 import { initUniverse, getUniverse, setFallbackUniverse } from "./src/services/StockUniverseService";
 import axios from "axios";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -1577,6 +1576,18 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
   // Initialize Upstox service singleton
   const upstoxService = UpstoxService.getInstance();
   const marketDataService = new UpstoxMarketDataService();
+  const getUpstoxCallbackUrl = (req: express.Request) => {
+    const forwardedProto = req.header("x-forwarded-proto");
+    const forwardedHost = req.header("x-forwarded-host");
+    const host = forwardedHost || req.get("host");
+    const protocol = forwardedProto || req.protocol || "https";
+
+    if (!host) {
+      return process.env.UPSTOX_REDIRECT_URI || "";
+    }
+
+    return `${protocol}://${host}/api/upstox/callback`;
+  };
 
   /**
    * GET /api/upstox/auth-url
@@ -1584,7 +1595,7 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
    */
   app.get("/api/upstox/auth-url", (req, res) => {
     try {
-      const authUrl = upstoxService.getAuthorizationUrl();
+      const authUrl = upstoxService.getAuthorizationUrl(getUpstoxCallbackUrl(req));
       logAction("upstox.auth_url.generated", { authUrl });
       res.json({ authUrl });
     } catch (error: any) {
@@ -1614,7 +1625,7 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
     }
 
     try {
-      await upstoxService.handleOAuthCallback(String(code));
+      await upstoxService.handleOAuthCallback(String(code), getUpstoxCallbackUrl(req));
       logAction("upstox.callback.success", { code: "***" });
       
       res.send(`
@@ -1744,7 +1755,7 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
     }
     
     try {
-      const authUrl = upstoxService.getAuthorizationUrl();
+      const authUrl = upstoxService.getAuthorizationUrl(getUpstoxCallbackUrl(req));
       res.json({
         connected: false,
         message: 'Click below to connect your Upstox account and get live market data',
@@ -1785,7 +1796,7 @@ const createUltraQuantUniverse = (): UltraQuantProfile[] =>
     }
 
     try {
-      const authUrl = upstoxService.getAuthorizationUrl();
+      const authUrl = upstoxService.getAuthorizationUrl(getUpstoxCallbackUrl(req));
       res.send(`<!DOCTYPE html><html><head><title>Connect Upstox</title>${STYLES}</head><body><div class="card"><div class="logo"><div class="logo-icon">&#128200;</div><div><div class="logo-text">StockPulse</div><div class="logo-sub">Premium Terminal</div></div></div><div class="badge badge-red"><div class="dot dot-red"></div>Not Connected</div><h1>Connect to Upstox</h1><p class="subtitle">Authorize once to unlock live market data across all tabs.</p><div class="warn-box"><div style="font-size:16px;flex-shrink:0">&#9888;&#65039;</div><div class="warn-text"><strong>Currently using simulated data.</strong> Connect your Upstox account to switch to real-time live market feeds instantly.</div></div><div class="steps-box"><div class="section-label">What happens next</div><div class="step"><div class="step-num">1</div><div class="step-text">Redirected to Upstox login page</div></div><div class="step"><div class="step-num">2</div><div class="step-text">Login with your Upstox credentials</div></div><div class="step"><div class="step-num">3</div><div class="step-text">Authorize StockPulse to access market data</div></div><div class="step"><div class="step-num">4</div><div class="step-text">Redirected back automatically — token saved securely</div></div><div class="step"><div class="step-num">5</div><div class="step-text">All tabs switch to live data instantly</div></div></div><div class="benefits"><div class="benefit"><div class="bdot"></div>Real-time quotes</div><div class="benefit"><div class="bdot"></div>Live price feed</div><div class="benefit"><div class="bdot"></div>Actual volume data</div><div class="benefit"><div class="bdot"></div>5000+ instruments</div><div class="benefit"><div class="bdot"></div>NSE + BSE coverage</div><div class="benefit"><div class="bdot"></div>Auto daily refresh</div></div><a href="${authUrl}" class="btn btn-primary">&#128640; Authorize Upstox Account</a><a href="/" class="btn btn-secondary">&#8592; Back to Dashboard</a><p class="note">Credentials stored locally. OAuth 2.0 secured. Never shared.</p></div></body></html>`);
     } catch (error: any) {
       res.send(`<!DOCTYPE html><html><head><title>Setup Required</title>${STYLES}</head><body><div class="card"><div class="logo"><div class="logo-icon">&#9881;&#65039;</div><div><div class="logo-text">StockPulse</div><div class="logo-sub">Configuration</div></div></div><div class="badge badge-red"><div class="dot dot-red"></div>Config Missing</div><h1>Setup Required</h1><p class="subtitle">Upstox API credentials are not configured in your <code style="color:#818cf8">.env</code> file.</p><div class="section-label" style="font-size:9px;font-weight:700;color:#52525b;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:12px">Add to your .env file</div><div class="code-box">UPSTOX_CLIENT_ID=your_client_id<br>UPSTOX_CLIENT_SECRET=your_client_secret<br>UPSTOX_REDIRECT_URI=http://localhost:3000/api/upstox/callback</div><a href="https://account.upstox.com/developer/apps" target="_blank" class="btn btn-primary">Get Credentials from Upstox &#8594;</a><a href="/" class="btn btn-secondary">&#8592; Back to Dashboard</a><p class="note">After adding credentials, restart with <code style="color:#818cf8">npm run dev</code></p></div></body></html>`);
@@ -3895,8 +3906,9 @@ Generate stockNews for ALL ${Math.min(15, base.rankings.length)} stocks. Generat
   // END NEXT-DAY PREDICTION ENGINE
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Vite middleware for development
+  // Vite middleware for development (dynamic import keeps it out of the production bundle)
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

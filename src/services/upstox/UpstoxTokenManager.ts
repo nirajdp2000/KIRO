@@ -27,8 +27,16 @@ type SqliteDB = {
 };
 
 let db: SqliteDB | null = null;
+let dbInitialized = false;
 
-if (!process.env.VERCEL) {
+function getDb(): SqliteDB | null {
+  if (dbInitialized) return db;
+  dbInitialized = true;
+  // Skip sqlite on Vercel (read-only filesystem, no native bindings)
+  if (process.env.VERCEL) {
+    console.log('[UpstoxTokenManager] Vercel environment — using env/memory storage');
+    return null;
+  }
   try {
     const _require = createRequire(import.meta.url);
     const Database = _require('better-sqlite3');
@@ -48,14 +56,14 @@ if (!process.env.VERCEL) {
   } catch {
     console.log('[UpstoxTokenManager] SQLite unavailable, using env/memory storage');
   }
-} else {
-  console.log('[UpstoxTokenManager] Vercel environment — using env/memory storage');
+  return db;
 }
 
 // ─── In-memory fallback ───────────────────────────────────────────────────────
 let memoryToken: TokenRecord | null = null;
 
 function readRecord(): TokenRecord | null {
+  const db = getDb();
   if (db) {
     const row = db.prepare('SELECT * FROM upstox_tokens ORDER BY id DESC LIMIT 1').get() as any;
     if (!row) return null;
@@ -65,6 +73,7 @@ function readRecord(): TokenRecord | null {
 }
 
 function writeRecord(r: TokenRecord): void {
+  const db = getDb();
   if (db) {
     const now = Date.now();
     db.prepare('DELETE FROM upstox_tokens').run();
@@ -98,8 +107,9 @@ export class UpstoxTokenManager {
     return Date.now() >= expiresAt - 5 * 60 * 1000; // 5-min buffer
   }
 
-  private async refreshAccessToken(refreshToken: string): Promise<void> {
-    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: redirectUri } = process.env;
+  private async refreshAccessToken(refreshToken: string, redirectUriOverride?: string): Promise<void> {
+    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: envRedirectUri } = process.env;
+    const redirectUri = redirectUriOverride || envRedirectUri;
     if (!clientId || !clientSecret || !redirectUri) throw new Error('Upstox credentials not configured');
 
     const params = new URLSearchParams({
@@ -144,8 +154,9 @@ export class UpstoxTokenManager {
     return record.access_token;
   }
 
-  async exchangeAuthorizationCode(code: string): Promise<void> {
-    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: redirectUri } = process.env;
+  async exchangeAuthorizationCode(code: string, redirectUriOverride?: string): Promise<void> {
+    const { UPSTOX_CLIENT_ID: clientId, UPSTOX_CLIENT_SECRET: clientSecret, UPSTOX_REDIRECT_URI: envRedirectUri } = process.env;
+    const redirectUri = redirectUriOverride || envRedirectUri;
     if (!clientId || !clientSecret || !redirectUri) throw new Error('Upstox credentials not configured');
 
     const params = new URLSearchParams({
