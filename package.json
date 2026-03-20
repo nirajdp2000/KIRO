@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:server": "node --input-type=module -e \"import {build} from 'esbuild'; build({entryPoints:['server.ts'],bundle:true,platform:'node',target:'node20',format:'esm',outfile:'server.js',external:['better-sqlite3','fsevents','vite']}).then(()=>console.log('server.js built'))\"",
     "start": "NODE_ENV=production node --loader tsx/esm server.ts",
     "start:win": "set NODE_ENV=production && tsx server.ts",
-    "vercel-build": "npm run build",
+    "vercel-build": "npm run build && npm run build:server",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -34,8 +35,9 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
-    "@vercel/node": "^5.6.18",
+    "@vercel/node": "^3.2.24",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.12",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
