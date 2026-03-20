@@ -1,22 +1,29 @@
 /**
  * Vercel Serverless Entry Point
  *
- * All requests (frontend + API) are handled here in production.
- * The Express app is initialised once per cold start and reused.
+ * IMPORTANT: process.env.VERCEL must be set BEFORE server.ts is imported,
+ * because server.ts (and its transitive imports like UpstoxTokenManager,
+ * PredictionStorageService) check process.env.VERCEL at module evaluation time
+ * to decide whether to initialise better-sqlite3.
+ *
+ * ESM static imports are hoisted and evaluated before any code in this file runs,
+ * so we MUST use a dynamic import() to ensure the env var is set first.
  */
 
-// Mark as serverless before importing server
 process.env.VERCEL = '1';
 process.env.NODE_ENV = 'production';
 
-import { startServerlessApp } from '../server';
 import type { IncomingMessage, ServerResponse } from 'http';
 
-let appPromise: Promise<(req: IncomingMessage, res: ServerResponse) => void> | null = null;
+type AppHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
-function getApp() {
+let appPromise: Promise<AppHandler> | null = null;
+
+function getApp(): Promise<AppHandler> {
   if (!appPromise) {
-    appPromise = startServerlessApp() as Promise<any>;
+    appPromise = import('../server.js').then((mod) =>
+      mod.startServerlessApp() as Promise<AppHandler>
+    );
   }
   return appPromise;
 }

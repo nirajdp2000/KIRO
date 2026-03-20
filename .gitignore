@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+.vercel
+.env*.local
+
+# server.js is committed — it's the pre-built serverless bundle for Vercel
+# server.js
